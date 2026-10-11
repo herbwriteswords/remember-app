@@ -33,7 +33,7 @@ function addVerse(p) {
 function promoteQueue() {
   if (!M.METHOD.oneNewVerseAtATime) { S.verses.forEach(v => { if (v.status === 'queued') v.status = 'learning'; }); return; }
   if (S.verses.some(v => v.status === 'learning' && v.text)) return;
-  const next = S.verses.filter(v => v.status === 'queued' && v.text).sort((a, b) => a.order - b.order)[0];
+  const next = S.verses.filter(v => v.status === 'queued' && v.text && v.held !== today()).sort((a, b) => a.order - b.order)[0];
   if (next) { next.status = 'learning'; next.stage = 0; next.due = today(); }
 }
 const current = () => S.verses.filter(v => v.status === 'learning').sort((a, b) => a.order - b.order);
@@ -63,9 +63,39 @@ function render() {
   if (flow) return renderFlow();
   ({ today: renderToday, practice: renderPractice, library: renderLibrary, settings: renderSettings })[tab]();
 }
-function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 2600); }
+function toast(msg, undo) {
+  const t = $('#toast'); t.innerHTML = `<span>${esc(msg)}</span>${undo ? '<button id="undo">Undo</button>' : ''}`; t.classList.toggle('act', !!undo); t.classList.add('show');
+  if (undo) $('#undo').onclick = () => { t.classList.remove('show'); undo(); };
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), undo ? 5000 : 2600);
+}
+// Remove / requeue with undo. The next queued verse is promoted if the daily verse left.
+function snapshot() { return JSON.stringify(S.verses); }
+function restore(snap) { S.verses = JSON.parse(snap); save(); render(); toast('Restored'); }
+function removeVerse(id) {
+  const v = S.verses.find(x => x.id === id); if (!v) return; const snap = snapshot();
+  S.verses = S.verses.filter(x => x.id !== id); promoteQueue(); save(); render();
+  toast(`Removed ${v.ref}`, () => restore(snap));
+}
+function requeueVerse(id) {
+  const v = S.verses.find(x => x.id === id); if (!v) return; const snap = snapshot();
+  v.status = 'queued'; v.stage = 0; v.cleanStreak = 0; v.missStreak = 0;
+  v.order = Math.max(...S.verses.map(x => x.order)) + 1; // back of the line
+  v.held = today(); promoteQueue(); // it won't be re-promoted until tomorrow
+  save(); render(); toast(`${v.ref} moved back to the queue`, () => restore(snap));
+}
+function confirmDaily(id) {
+  const v = S.verses.find(x => x.id === id); if (!v) return;
+  sheet(`<p class="ref" style="font-size:18px;margin:0 2px 4px">${esc(v.ref)}</p><p class="small muted" style="margin:0 2px 16px">What would you like to do with today’s verse?</p>
+    <button class="btn block danger" id="cx-rm">Remove this verse</button><div style="height:10px"></div>
+    <button class="btn block" id="cx-q">Move back to queue</button><div style="height:10px"></div>
+    <button class="btn block ghost" id="cx-c">Cancel</button>`, s => {
+    $('#cx-rm', s).onclick = () => { closeSheet(); removeVerse(id); };
+    $('#cx-q', s).onclick = () => { closeSheet(); requeueVerse(id); };
+    $('#cx-c', s).onclick = closeSheet;
+  });
+}
 function sheet(html, onMount) {
-  const w = $('#sheet-wrap'), s = $('#sheet'); s.innerHTML = '<div class="grab"></div>' + html; w.hidden = false;
+  const w = $('#sheet-wrap'), s = $('#sheet'); $('#toast').classList.remove('show'); s.innerHTML = '<div class="grab"></div>' + html; w.hidden = false;
   $('#sheet-backdrop').onclick = closeSheet; onMount && onMount(s);
 }
 function closeSheet() { $('#sheet-wrap').hidden = true; $('#sheet').innerHTML = ''; }
@@ -84,7 +114,7 @@ function renderToday() {
     h += `<h2>Learning</h2>`;
     cur.forEach(v => {
       const st = M.METHOD.stages[0];
-      h += `<div class="card hero"><div class="row between"><span class="ref">${esc(v.ref)}<span class="tr">${trName(v.translation)}</span></span><span class="status learning">Daily</span></div>
+      h += `<div class="card hero"><div class="row between"><span class="ref">${esc(v.ref)}<span class="tr">${trName(v.translation)}</span></span><span class="row" style="gap:8px"><span class="status learning">Daily</span><button class="xbtn" data-x="${v.id}" aria-label="Remove or requeue ${esc(v.ref)}">✕</button></span></div>
       ${v.text ? `<p class="verse">${esc(v.text)}</p>` : `<p class="muted" style="margin-top:10px">Text needed — tap below to paste it or add your ESV key.</p>`}
       <div class="row between" style="margin-top:14px"><span class="small muted">${v.cleanStreak}/${st.advanceAfter} clean recitals in a row${v.lastCounted === today() ? ' · done for today ✓' : ''}</span></div>
       <div class="bar"><i style="width:${100 * v.cleanStreak / st.advanceAfter}%"></i></div>
@@ -97,15 +127,17 @@ function renderToday() {
     h += `<h2>Review · ${due.length}</h2><div class="list">` + due.map(v => `<div class="item" data-practice="${v.id}"><div class="grow"><div class="ref">${esc(v.ref)}</div><div class="meta">${M.METHOD.stages[v.stage].label} review</div></div><span class="chev">›</span></div>`).join('') + '</div>';
   }
   if (S.verses.some(v => v.text && v.status !== 'queued')) {
-    h += `<h2>Drill</h2><div class="row"><button class="btn grow" data-act="recall">📖 Recall by reference</button></div>`;
+    h += `<div class="spacer"></div><button class="btn block" data-act="recall">📖 Recall a verse by reference</button>`;
   }
   if (missingText.length) h += `<div class="note">${missingText.length} saved verse${missingText.length > 1 ? 's need' : ' needs'} text. Open it in Library to paste it, or add your ESV key in Settings.</div>`;
+  if (S.verses.length && !cur.length && !due.length) h += `<div class="spacer"></div><button class="btn primary block" data-act="add">${ICON.plus} Add a verse</button>`;
   if (!S.verses.length) h += `<div class="empty">${FLAME}<p>Your library is empty.</p><div class="spacer"></div><button class="btn primary" data-act="add">${ICON.plus} Add a verse</button></div>`;
   view.innerHTML = h; bind();
 }
 function bind() {
   view.querySelectorAll('[data-practice]').forEach(b => b.onclick = () => startPractice(b.dataset.practice));
   view.querySelectorAll('[data-combo]').forEach(b => b.onclick = () => startPractice(b.dataset.combo, { combo: true }));
+  view.querySelectorAll('[data-x]').forEach(b => b.onclick = e => { e.stopPropagation(); confirmDaily(b.dataset.x); });
   view.querySelectorAll('[data-act]').forEach(b => b.onclick = () => ({ add: openAdd, recall: startRecall })[b.dataset.act]());
 }
 
@@ -238,14 +270,48 @@ function renderLibrary() {
   const list = vs.filter(v => libFilter === 'all' || v.status === libFilter);
   let h = `<div class="topline">${brand()}<button class="btn sm primary" id="add">${ICON.plus} Add</button></div><h1>Library</h1><p class="muted">${vs.length} saved · ${counts('memorized')} memorized</p>
    <div class="seg" style="margin:18px 0 8px">${['all', 'learning', 'reviewing', 'memorized', 'queued'].map(s => `<button class="${libFilter === s ? 'on' : ''}" data-f="${s}">${s[0].toUpperCase() + s.slice(1)}</button>`).join('')}</div>`;
-  h += list.length ? `<div class="list">` + list.map(v => `<div class="item" data-open="${v.id}"><div class="grow"><div class="row between"><span class="ref">${esc(v.ref)}<span class="tr">${trName(v.translation)}</span></span><span class="status ${v.status}">${v.status}</span></div>
-      <div class="meta" style="margin-top:3px">${!v.text ? 'Needs text' : v.status === 'queued' ? 'Up next after the current verse' : `${M.METHOD.stages[v.stage].label} · next ${niceDate(v.due)}`}</div><div class="bar"><i style="width:${Math.round(100 * M.mastery(v))}%"></i></div></div></div>`).join('') + '</div>'
+  h += list.length ? `<div class="list">` + list.map(v => `<div class="swipe" data-id="${v.id}"><button class="swipe-del" tabindex="-1">Delete</button><div class="item" data-open="${v.id}"><div class="grow"><div class="row between"><span class="ref">${esc(v.ref)}<span class="tr">${trName(v.translation)}</span></span><span class="status ${v.status}">${v.status}</span></div>
+      <div class="meta" style="margin-top:3px">${!v.text ? 'Needs text' : v.status === 'queued' ? 'Up next after the current verse' : `${M.METHOD.stages[v.stage].label} · next ${niceDate(v.due)}`}</div><div class="bar"><i style="width:${Math.round(100 * M.mastery(v))}%"></i></div></div></div></div>`).join('') + '</div>'
     : `<div class="empty">${FLAME}<p>${vs.length ? 'Nothing here yet.' : 'No verses yet. You choose every one.'}</p></div>`;
   if (vs.some(v => v.translation === 'esv')) h += `<p class="copyright">${esc(B.ESV_COPYRIGHT)}</p>`;
   view.innerHTML = h;
   $('#add').onclick = openAdd;
   view.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { libFilter = b.dataset.f; render(); });
-  view.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openVerse(b.dataset.open));
+  view.querySelectorAll('.swipe').forEach(initSwipe);
+}
+// iOS-style swipe-left-to-delete (touch + mouse via Pointer Events). Vertical scroll stays native (touch-action: pan-y).
+let openSwipe = null;
+const DEL_W = 88;
+function closeOpenSwipe(except) { if (openSwipe && openSwipe !== except) { setX(openSwipe, 0, true); openSwipe = null; } }
+function setX(row, x, anim) { const it = row.querySelector('.item'); it.style.transition = anim ? 'transform 220ms cubic-bezier(.2,.8,.2,1)' : 'none'; it.style.transform = x ? `translateX(${x}px)` : ''; row.classList.toggle('open', x < 0); row._x = x; }
+document.addEventListener('pointerdown', e => { if (openSwipe && !openSwipe.contains(e.target)) closeOpenSwipe(); }, true);
+function initSwipe(row) {
+  const it = row.querySelector('.item'), id = row.dataset.id; row._x = 0;
+  let sx, sy, base, mode = null, moved = false, pid = null;
+  it.addEventListener('pointerdown', e => { if (e.button > 0) return; sx = e.clientX; sy = e.clientY; base = row._x || 0; mode = null; moved = false; pid = e.pointerId; });
+  it.addEventListener('pointermove', e => {
+    if (pid !== e.pointerId || sx == null) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (!mode) { if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return; mode = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v'; if (mode === 'h') { closeOpenSwipe(row); try { it.setPointerCapture(pid); } catch {} } }
+    if (mode !== 'h') return;
+    moved = true; e.preventDefault();
+    let x = Math.min(0, base + dx); const full = -row.offsetWidth;
+    if (x < -DEL_W) x = -DEL_W + (x + DEL_W) * .9; // follows finger past the button
+    setX(row, Math.max(full, x), false);
+    row.classList.toggle('full', x < -row.offsetWidth * .6);
+  });
+  const end = e => {
+    if (pid !== e.pointerId) return; pid = null; sx = null;
+    if (mode !== 'h') return;
+    const x = row._x;
+    if (x < -row.offsetWidth * .6) { setX(row, -row.offsetWidth, true); setTimeout(() => removeVerse(id), 200); openSwipe = null; }
+    else if (x < -DEL_W / 2) { setX(row, -DEL_W, true); openSwipe = row; }
+    else { setX(row, 0, true); if (openSwipe === row) openSwipe = null; }
+    row.classList.remove('full');
+  };
+  it.addEventListener('pointerup', end); it.addEventListener('pointercancel', end);
+  it.addEventListener('click', e => { if (moved) { moved = false; return; } if (row._x < 0) { setX(row, 0, true); openSwipe = null; return; } openVerse(id); });
+  row.querySelector('.swipe-del').onclick = e => { e.stopPropagation(); openSwipe = null; row.style.height = row.offsetHeight + 'px'; row.classList.add('gone'); setTimeout(() => removeVerse(id), 180); };
 }
 function openVerse(id) {
   const v = S.verses.find(x => x.id === id); if (!v) return;
@@ -258,7 +324,7 @@ function openVerse(id) {
     $('#refetch', s) && ($('#refetch', s).onclick = async e => { e.target.textContent = 'Loading…'; try { v.text = (await B.fetchPassage(v.ref, v.translation, esvKey(), { noCache: true })).text; promoteQueue(); save(); openVerse(id); render(); } catch (err) { e.target.textContent = 'Load text'; toast(err.message); } });
     $('#sv', s).onclick = () => { persist(); closeSheet(); toast('Saved'); render(); };
     $('#pr', s).onclick = () => { persist(); closeSheet(); startPractice(id); };
-    $('#rm', s).onclick = () => { if (confirm(`Remove ${v.ref} from your library?`)) { S.verses = S.verses.filter(x => x.id !== id); promoteQueue(); save(); closeSheet(); render(); toast('Removed'); } };
+    $('#rm', s).onclick = () => { closeSheet(); removeVerse(id); };
   });
 }
 
@@ -288,7 +354,7 @@ function renderAdd() {
      ${a.chapterData && a.chapterData.previewTr && a.chapterData.previewTr !== a.tr ? `<p class="small faint">Preview shown in ${trName(a.chapterData.previewTr)}${a.chapterData.why ? ' (' + esc(a.chapterData.why) + ')' : ''}. Your verses are saved in ${trName(a.tr)}.</p>` : ''}`;
   }
   const selCount = a.mode === 'browse' ? a.sel.size : 0;
-  h += `<div class="spacer"></div>${a.mode === 'browse' && a.chapter ? `<button class="btn primary block" id="savesel" ${selCount ? '' : 'disabled'}>Save ${selCount ? selRef() : 'selection'}</button>` : ''}`;
+  h += a.mode === 'browse' && a.chapter ? `<div class="actionbar ${selCount ? 'show' : ''}" id="abar"><button class="btn ghost sm" id="clearsel">Clear</button><button class="btn primary grow" id="savesel">${addLabel()}</button></div>` : '<div class="sheet-end"></div>';
   sheet(h, s => {
     $('#cl', s).onclick = closeSheet;
     $('#tr', s).onchange = e => { a.tr = e.target.value; a.preview = null; const reload = a.chapter; if (reload) a.chapterData = null; renderAdd(); if (reload) loadChapter(); else if (a.q && a.mode === 'search' && B.parseRef(a.q)) doSearch(); };
@@ -297,7 +363,9 @@ function renderAdd() {
     s.querySelectorAll('[data-b]').forEach(b => b.onclick = () => { a.book = b.dataset.b; renderAdd(); });
     s.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { a.chapter = +b.dataset.c; a.sel.clear(); a.chapterData = null; renderAdd(); loadChapter(); });
     $('#bk', s) && ($('#bk', s).onclick = () => { if (a.chapter) a.chapter = null; else a.book = null; renderAdd(); });
-    s.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { const n = +b.dataset.v; a.sel.has(n) ? a.sel.delete(n) : a.sel.add(n); b.classList.toggle('on'); const sb = $('#savesel', s); sb.disabled = !a.sel.size; sb.textContent = a.sel.size ? 'Save ' + selRef() : 'Save selection'; });
+    const upd = () => { $('#abar', s).classList.toggle('show', a.sel.size > 0); $('#savesel', s).textContent = addLabel(); };
+    s.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { const n = +b.dataset.v; a.sel.has(n) ? a.sel.delete(n) : a.sel.add(n); b.classList.toggle('on'); upd(); });
+    $('#clearsel', s) && ($('#clearsel', s).onclick = () => { a.sel.clear(); s.querySelectorAll('.vpick.on').forEach(x => x.classList.remove('on')); upd(); });
     $('#savesel', s) && ($('#savesel', s).onclick = saveSelection);
   });
 }
@@ -309,6 +377,7 @@ async function loadChapter() {
 }
 // Contiguous runs of selected verses become separate entries (e.g. 1-3 and 6).
 function runs() { const v = [...add.sel].sort((x, y) => x - y), out = []; v.forEach(n => { const l = out[out.length - 1]; if (l && n === l[1] + 1) l[1] = n; else out.push([n, n]); }); return out; }
+function addLabel() { const n = add.sel.size, r = runs(); return !n ? 'Add' : r.length === 1 ? `Add ${selRef().replace('–', '-')}` : `Add ${n} verses`; }
 function selRef() { return runs().map(([x, y]) => B.refString(add.book, add.chapter, x, y)).join(', '); }
 async function saveSelection() {
   const a = add; const rs = runs(); const btn = $('#savesel'); if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -346,8 +415,9 @@ function showPreview() {
   pv.innerHTML = `<div class="card"><div class="ref">${esc(p.ref)}<span class="tr">${trName(a.tr)}</span></div>
    ${text ? `<p class="verse">${esc(text)}</p>` : `${err ? `<p class="small" style="color:var(--bad);margin-top:8px">${esc(err)}</p><button class="btn sm" id="retry" style="margin-top:8px">Retry</button>` : ''}<textarea id="paste" style="min-height:120px;font-size:16px;margin-top:10px" placeholder="Paste the verse text here (or leave blank and add it later)"></textarea>`}
    ${a.tr === 'esv' && text ? `<p class="copyright">${esc(B.ESV_COPYRIGHT)}</p>` : ''}</div>
-   <button class="btn primary block" id="savep">Save ${esc(p.ref)}</button>`;
+   <div class="actionbar show"><button class="btn ghost sm" id="clearp">Clear</button><button class="btn primary grow" id="savep">Add ${esc(p.ref.replace('–', '-'))}</button></div>`;
   $('#retry', s) && ($('#retry', s).onclick = doSearch);
+  $('#clearp', s).onclick = () => { a.preview = null; a.q = ''; pv.innerHTML = ''; const q = $('#q', s); q.value = ''; q.focus(); };
   $('#savep', s).onclick = () => {
     const t = needPaste ? $('#paste', s).value.trim().replace(/\s+/g, ' ') : text;
     addVerse({ ref: p.ref, book: p.book, chapter: p.chapter, from: p.from, to: p.to, translation: a.tr, text: t });
