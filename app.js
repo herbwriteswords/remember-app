@@ -16,8 +16,11 @@ const ICON = {
 let S = load();
 function load() {
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.verses) return s; } catch {}
-  return { verses: [], settings: { translation: 'esv', reminder: '07:30', showStreak: true }, days: [] };
+  return { verses: [], settings: { translation: 'esv', reminder: '07:30', showStreak: true, evening: true, reminder2: '19:30' }, days: [] };
 }
+// defaults for older saved data
+S.settings = Object.assign({ showStreak: true, reminder: '07:30', evening: true, reminder2: '19:30' }, S.settings);
+if (S.settings.showStreak == null) S.settings.showStreak = true;
 function save() { localStorage.setItem(KEY, JSON.stringify(S)); if (S.push && S.push.enabled) pushSyncSoon(); }
 const cleanKey = k => String(k || '').replace(/^\s*(authorization:\s*)?token\s+/i, '').replace(/\s+/g, '').replace(/^["']|["']$/g, '');
 const esvKey = () => cleanKey(localStorage.getItem(ESVKEY));
@@ -47,7 +50,13 @@ function combo(v) {
   const all = [...mates, v];
   return { ids: all.map(x => x.id), ref: B.refString(v.book, v.chapter, all[0].from, v.to || v.from), text: all.map(x => x.text).join(' '), translation: v.translation, primary: v.id };
 }
-function markDay() { const d = today(); if (!S.days.includes(d)) { S.days.push(d); S.days = S.days.slice(-400); } }
+// A day counts when any recital is completed. Also tells the reminder server so tonight's nudge is skipped.
+function markDay() {
+  const d = today();
+  if (!S.days.includes(d)) { S.days.push(d); S.days = S.days.slice(-400); }
+  S.bestStreak = Math.max(S.bestStreak || 0, rhythm());
+  if (S.push && S.push.enabled && S.push.doneSent !== d && typeof pushDone === 'function') pushDone(d);
+}
 function rhythm() { // consecutive days ending today or yesterday — never shames a gap
   let n = 0, d = new Date(); if (!S.days.includes(M.ymd(d))) d.setDate(d.getDate() - 1);
   while (S.days.includes(M.ymd(d))) { n++; d.setDate(d.getDate() - 1); } return n;
@@ -104,12 +113,18 @@ function niceDate(d) { if (!d) return '—'; if (d <= today()) return 'Today'; i
 function greeting() { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; }
 
 // ---------- TODAY ----------
+function streakChip(r) {
+  if (!S.settings.showStreak || !S.verses.length) return '';
+  const done = S.days.includes(today()), f = FLAME.replace('<svg', '<svg width="15" height="15"');
+  if (r > 0) return `<div class="streak ${done ? 'lit' : ''}" title="Best: ${S.bestStreak || r} days">${f}<b>${r}-day streak</b>${done ? '' : '<span>· keep it going today</span>'}</div>`;
+  return `<div class="streak">${f}<span>${S.days.length ? 'Start a new streak today' : 'Start your streak today'}</span></div>`;
+}
 function renderToday() {
   promoteQueue(); save();
   const cur = current(), due = dueReviews(), r = rhythm();
   const missingText = S.verses.filter(v => !v.text);
-  let h = `<div class="topline">${brand()}${S.settings.showStreak && r > 1 ? `<span class="pill ember" title="Days practiced in a row">${FLAME.replace('<svg', '<svg width="14" height="14"')} ${r} days</span>` : ''}</div>
-  <h1>${greeting()}, Herb.</h1><p class="muted">${cur.length || due.length ? 'Here’s what’s on the table today.' : S.verses.length ? 'You’re all caught up. Rest in it.' : 'Pick a verse to begin.'}</p>`;
+  let h = `<div class="topline">${brand()}</div>
+  <h1>${greeting()}, Herb.</h1>${streakChip(r)}<p class="muted">${cur.length || due.length ? 'Here’s what’s on the table today.' : S.verses.length ? 'You’re all caught up. Rest in it.' : 'Pick a verse to begin.'}</p>`;
   if (cur.length) {
     h += `<h2>Learning</h2>`;
     cur.forEach(v => {
@@ -445,7 +460,7 @@ function renderSettings() {
    <div class="push-box" id="pushbox">${pushSection()}</div>
    <p class="small muted" style="margin-top:14px">Backup: a repeating calendar alarm works even without notifications.</p>
    <div class="spacer"></div><button class="btn sm" id="ics">Add daily reminder to Calendar</button>
-   <div class="row between" style="margin-top:16px"><span>Show “days in a row”</span><button class="switch" id="streak" role="switch" aria-checked="${st.showStreak}" aria-label="Show days in a row"><i></i></button></div>
+   <div class="row between" style="margin-top:16px"><span>Show streak<span class="small muted" style="display:block">Best streak: ${S.bestStreak || 0} day${(S.bestStreak || 0) === 1 ? '' : 's'}</span></span><button class="switch" id="streak" role="switch" aria-checked="${st.showStreak}" aria-label="Show days in a row"><i></i></button></div>
   </div>
   <h2>Your verses</h2><div class="card">
    <button class="btn block" id="seed">Load my current verses</button>
@@ -542,9 +557,11 @@ async function pushSubscribe(askPermission) {
   if (askPermission) { try { sub = await reg.pushManager.subscribe(opts); } catch (e) { throw new Error(Notification.permission === 'denied' ? blocked : 'Couldn’t turn on notifications (' + (e.message || e.name) + ').'); } }
   else sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe(opts);
   const ref = currentRef();
-  await api('/subscribe', { id: deviceId(), subscription: sub.toJSON(), time: S.settings.reminder, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, enabled: true, ref });
+  await api('/subscribe', { id: deviceId(), subscription: sub.toJSON(), time: S.settings.reminder, evening: !!S.settings.evening, time2: S.settings.reminder2, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, enabled: true, ref });
   S.push.enabled = true; S.push.lastRef = ref; S.push.synced = today(); save();
+  if (S.days.includes(today()) && S.push.doneSent !== today()) pushDone(today());
 }
+async function pushDone(d) { try { await api('/done', { id: deviceId(), date: d }); S.push.doneSent = d; localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { console.warn('push done', e.message); } }
 async function pushDisable() {
   try { const reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription(); if (sub) await sub.unsubscribe(); } catch {}
   try { await api('/unsubscribe', { id: deviceId() }); } catch {}
@@ -554,9 +571,11 @@ function pushSection() {
   const on = S.push && S.push.enabled;
   if (!pushConfigured()) return `<p class="small muted"><b>Push reminders</b> are almost ready — the reminder server isn’t connected yet.</p>`;
   if (!pushSupported() || !isStandalone()) return `<p class="small muted"><b>Push reminders:</b> Add RemEmber to your Home Screen and open it from the icon to turn on reminders. <span class="faint">(Safari → Share → Add to Home Screen.)</span></p>`;
-  return `<div class="row between"><div><div style="font-weight:600">Push reminders</div><div class="small muted" id="pushstat">${on ? `On · daily at ${esc(fmtTime(S.settings.reminder))}` : 'Off'}</div></div>
+  return `<div class="row between"><div><div style="font-weight:600">Push reminders</div><div class="small muted" id="pushstat">${on ? `On · ${esc(fmtTime(S.settings.reminder))}${S.settings.evening ? ' + ' + esc(fmtTime(S.settings.reminder2)) + ' if needed' : ''}` : 'Off'}</div></div>
     ${on ? '<button class="switch" id="pushoff" role="switch" aria-checked="true" aria-label="Push reminders"><i></i></button>' : ''}</div>
-    ${on ? '<div class="spacer"></div><button class="btn sm" id="pushtest">Send test</button>' : '<div class="spacer"></div><button class="btn primary block" id="pushon">Turn on reminders</button>'}`;
+    ${on ? `<div class="row between" style="margin-top:16px"><div><div>Evening nudge</div><div class="small muted">Only if you haven’t practiced yet that day</div></div><button class="switch" id="evening" role="switch" aria-checked="${!!S.settings.evening}" aria-label="Evening nudge"><i></i></button></div>
+      ${S.settings.evening ? `<label class="field" style="margin-bottom:0"><span>Evening nudge time</span><input type="time" id="rem2" value="${esc(S.settings.reminder2)}"></label>` : ''}
+      <div class="spacer"></div><button class="btn sm" id="pushtest">Send test</button>` : '<div class="spacer"></div><button class="btn primary block" id="pushon">Turn on reminders</button>'}`;
 }
 function fmtTime(t) { const [h, m] = t.split(':').map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
 function bindPush() {
@@ -564,6 +583,9 @@ function bindPush() {
   const redraw = () => { box.innerHTML = pushSection(); bindPush(); };
   $('#pushon') && ($('#pushon').onclick = async e => { e.target.disabled = true; e.target.textContent = 'Turning on…'; try { await pushSubscribe(true); toast('Reminders are on'); } catch (err) { toast(err.message); } redraw(); });
   $('#pushoff') && ($('#pushoff').onclick = async () => { await pushDisable(); toast('Reminders off'); redraw(); });
+  const resync = msg => pushSubscribe(false).then(() => toast(msg)).catch(err => toast(err.message));
+  $('#evening') && ($('#evening').onclick = () => { S.settings.evening = !S.settings.evening; save(); redraw(); resync(S.settings.evening ? 'Evening nudge on' : 'Evening nudge off'); });
+  $('#rem2') && ($('#rem2').onchange = e => { if (!e.target.value) return; S.settings.reminder2 = e.target.value; save(); const st = $('#pushstat'); if (st) st.textContent = `On · ${fmtTime(S.settings.reminder)} + ${fmtTime(S.settings.reminder2)} if needed`; resync('Evening time updated'); });
   $('#pushtest') && ($('#pushtest').onclick = async e => { e.target.disabled = true; e.target.textContent = 'Sending…'; try { await api('/test', { id: deviceId() }); toast('Test sent — check your notifications'); } catch (err) { toast(err.message); if (/again/.test(err.message)) { S.push.enabled = false; save(); } } redraw(); });
 }
 // On open: refresh the subscription once a day; keep the verse ref in sync when the daily verse changes.
