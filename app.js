@@ -478,10 +478,6 @@ function renderSettings() {
    <div class="spacer"></div><button class="btn sm" id="ics">Add daily reminder to Calendar</button>
    <div class="row between" style="margin-top:16px"><span>Show streak<span class="small muted" style="display:block">Best streak: ${S.bestStreak || 0} day${(S.bestStreak || 0) === 1 ? '' : 's'}</span></span><button class="switch" id="streak" role="switch" aria-checked="${st.showStreak}" aria-label="Show days in a row"><i></i></button></div>
   </div>
-  <h2>Your verses</h2><div class="card">
-   <button class="btn block" id="seed">Load my current verses</button>
-   <p class="small muted" style="margin-top:8px">Romans 4:4–5 (3-day review), Philippians 4:11 (reviewing), 4:12 (current), then 4:13 and Titus 3:4–8 queued.</p>
-  </div>
   <h2>Backup</h2><div class="card"><div class="row"><button class="btn grow" id="exp">Export JSON</button><button class="btn grow" id="imp">Import</button></div><input type="file" id="file" accept="application/json,.json" hidden>
    <div class="spacer"></div><button class="btn danger block" id="reset">Reset everything</button></div>
   <p class="copyright">${esc(B.ESV_COPYRIGHT)}</p><p class="copyright">RemEmber keeps everything on this device. Method rules: method.js.</p>`;
@@ -499,7 +495,6 @@ function renderSettings() {
   bindPush();
   $('#ics').onclick = downloadICS;
   $('#streak').onclick = e => { st.showStreak = !st.showStreak; save(); e.currentTarget.setAttribute('aria-checked', st.showStreak); };
-  $('#seed').onclick = seed;
   $('#exp').onclick = () => { const blob = new Blob([JSON.stringify({ app: 'RemEmber', version: 1, exported: new Date().toISOString(), state: S }, null, 2)], { type: 'application/json' }); dl(blob, `remember-backup-${today()}.json`); };
   $('#imp').onclick = () => $('#file').click();
   $('#file').onchange = async e => { try { const j = JSON.parse(await e.target.files[0].text()); const st2 = j.state || j; if (!Array.isArray(st2.verses)) throw 0; if (confirm(`Replace your library with ${st2.verses.length} verses from this backup?`)) { S = st2; save(); toast('Backup restored'); render(); } } catch { toast('That file isn’t a RemEmber backup.'); } };
@@ -516,24 +511,6 @@ async function fillMissingESV() {
   for (const v of S.verses.filter(v => !v.text && v.translation === 'esv')) { try { v.text = (await B.fetchPassage(v.ref, 'esv', esvKey())).text; n++; } catch (e) { toast(e.message); break; } }
   if (n) render();
   if (n) { promoteQueue(); save(); toast(`Fetched ESV text for ${n} verse${n > 1 ? 's' : ''}`); }
-}
-async function seed() {
-  const has = r => S.verses.some(v => v.ref === r);
-  const T0 = today(), base = Date.now();
-  const items = [
-    { ref: 'Romans 4:4–5', book: 'Romans', chapter: 4, from: 4, to: 5, status: 'reviewing', stage: 1, due: M.addDays(T0, 1) },
-    { ref: 'Philippians 4:11', book: 'Philippians', chapter: 4, from: 11, to: 11, status: 'reviewing', stage: 1, due: T0 },
-    { ref: 'Philippians 4:12', book: 'Philippians', chapter: 4, from: 12, to: 12, status: 'learning', stage: 0, due: T0 },
-    { ref: 'Philippians 4:13', book: 'Philippians', chapter: 4, from: 13, to: 13, status: 'queued', stage: 0 },
-    { ref: 'Titus 3:4–8', book: 'Titus', chapter: 3, from: 4, to: 8, status: 'queued', stage: 0 },
-  ];
-  let added = 0;
-  items.forEach((it, i) => { if (!has(it.ref)) { addVerse(Object.assign({ translation: 'esv', text: '', order: base + i }, it)); added++; } });
-  // addVerse may promote; keep the seeded statuses exact
-  items.forEach(it => { const v = S.verses.find(x => x.ref === it.ref); if (v && v.status !== it.status && v.history.length === 0) { v.status = it.status; v.stage = it.stage; } });
-  save(); toast(added ? `Loaded ${added} verses` : 'Already loaded');
-  if (esvKey()) await fillMissingESV(); else toast('Add your ESV key (or paste text in Library) to fill in the words.');
-  render();
 }
 
 // iOS keyboard: keep the bottom sheet above the keyboard and within the visible viewport.
