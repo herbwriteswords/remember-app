@@ -18,7 +18,7 @@ function load() {
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.verses) return s; } catch {}
   return { verses: [], settings: { translation: 'esv', reminder: '07:30', showStreak: true }, days: [] };
 }
-function save() { localStorage.setItem(KEY, JSON.stringify(S)); }
+function save() { localStorage.setItem(KEY, JSON.stringify(S)); if (S.push && S.push.enabled) pushSyncSoon(); }
 const cleanKey = k => String(k || '').replace(/^\s*(authorization:\s*)?token\s+/i, '').replace(/\s+/g, '').replace(/^["']|["']$/g, '');
 const esvKey = () => cleanKey(localStorage.getItem(ESVKEY));
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -442,7 +442,8 @@ function renderSettings() {
   </div>
   <h2>Rhythm</h2><div class="card">
    <label class="field" style="margin-top:0"><span>Daily reminder time</span><input type="time" id="rem" value="${esc(st.reminder)}"></label>
-   <p class="small muted">Honest note: a web app on iPhone can’t schedule local reminders by itself (iOS only allows push notifications from a server, and only after adding to Home Screen). So the reliable option is a repeating calendar alarm:</p>
+   <div class="push-box" id="pushbox">${pushSection()}</div>
+   <p class="small muted" style="margin-top:14px">Backup: a repeating calendar alarm works even without notifications.</p>
    <div class="spacer"></div><button class="btn sm" id="ics">Add daily reminder to Calendar</button>
    <div class="row between" style="margin-top:16px"><span>Show “days in a row”</span><button class="switch" id="streak" role="switch" aria-checked="${st.showStreak}" aria-label="Show days in a row"><i></i></button></div>
   </div>
@@ -462,7 +463,8 @@ function renderSettings() {
     try { const r = await B.fetchPassage('John 11:35', 'esv', k, { noCache: true }); out.textContent = `✓ Works: “${r.text}” (${r.ref})`; out.style.color = 'var(--ok)'; fillMissingESV(); }
     catch (e) { out.textContent = '✕ ' + e.message; out.style.color = 'var(--bad)'; }
   };
-  $('#rem').onchange = e => { st.reminder = e.target.value; save(); };
+  $('#rem').onchange = e => { st.reminder = e.target.value; save(); if (S.push && S.push.enabled) pushSubscribe(false).then(() => toast('Reminder time updated')).catch(err => toast(err.message)); };
+  bindPush();
   $('#ics').onclick = downloadICS;
   $('#streak').onclick = e => { st.showStreak = !st.showStreak; save(); e.currentTarget.setAttribute('aria-checked', st.showStreak); };
   $('#seed').onclick = seed;
@@ -511,12 +513,75 @@ if (window.visualViewport) {
   };
   vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit();
 }
+// ---------- PUSH REMINDERS (Cloudflare Worker) ----------
+const CFG = window.REMEMBER_CONFIG || {};
+const pushConfigured = () => !!CFG.WORKER_URL && !/[<>]/.test(CFG.WORKER_URL);
+const isStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+function deviceId() { S.push = S.push || {}; if (!S.push.id) { S.push.id = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, '0')).join(''); save(); } return S.push.id; }
+function b64u(s) { const p = '='.repeat((4 - s.length % 4) % 4), b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, c => c.charCodeAt(0)); }
+const currentRef = () => (current()[0] || {}).ref || '';
+async function api(path, body) {
+  let r; try { r = await fetch(CFG.WORKER_URL.replace(/\/$/, '') + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-app-key': CFG.APP_KEY }, body: JSON.stringify(body) }); }
+  catch { throw new Error('Couldn’t reach the reminder server.'); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error === 'unknown id' || r.status === 410 ? 'Reminders need to be turned on again.' : `Reminder server error (HTTP ${r.status}${j.error ? ': ' + j.error : ''}).`);
+  return j;
+}
+// Subscribe (or refresh) this device. askPermission=true only from a tap (iOS requires a user gesture).
+// Apple: call pushManager.subscribe() *immediately* inside the tap handler (it shows the permission prompt),
+// so the registration is resolved ahead of time and nothing is awaited before subscribe().
+let swReg = null;
+async function pushSubscribe(askPermission) {
+  const blocked = 'Notifications are blocked. Turn them on in iPhone Settings → Notifications → RemEmber.';
+  if (Notification.permission === 'denied') throw new Error(blocked);
+  if (!askPermission && Notification.permission !== 'granted') throw new Error('Notification permission is off.');
+  const reg = swReg || await navigator.serviceWorker.ready;
+  const opts = { userVisibleOnly: true, applicationServerKey: b64u(CFG.VAPID_PUBLIC_KEY) };
+  let sub;
+  if (askPermission) { try { sub = await reg.pushManager.subscribe(opts); } catch (e) { throw new Error(Notification.permission === 'denied' ? blocked : 'Couldn’t turn on notifications (' + (e.message || e.name) + ').'); } }
+  else sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe(opts);
+  const ref = currentRef();
+  await api('/subscribe', { id: deviceId(), subscription: sub.toJSON(), time: S.settings.reminder, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, enabled: true, ref });
+  S.push.enabled = true; S.push.lastRef = ref; S.push.synced = today(); save();
+}
+async function pushDisable() {
+  try { const reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription(); if (sub) await sub.unsubscribe(); } catch {}
+  try { await api('/unsubscribe', { id: deviceId() }); } catch {}
+  S.push.enabled = false; save();
+}
+function pushSection() {
+  const on = S.push && S.push.enabled;
+  if (!pushConfigured()) return `<p class="small muted"><b>Push reminders</b> are almost ready — the reminder server isn’t connected yet.</p>`;
+  if (!pushSupported() || !isStandalone()) return `<p class="small muted"><b>Push reminders:</b> Add RemEmber to your Home Screen and open it from the icon to turn on reminders. <span class="faint">(Safari → Share → Add to Home Screen.)</span></p>`;
+  return `<div class="row between"><div><div style="font-weight:600">Push reminders</div><div class="small muted" id="pushstat">${on ? `On · daily at ${esc(fmtTime(S.settings.reminder))}` : 'Off'}</div></div>
+    ${on ? '<button class="switch" id="pushoff" role="switch" aria-checked="true" aria-label="Push reminders"><i></i></button>' : ''}</div>
+    ${on ? '<div class="spacer"></div><button class="btn sm" id="pushtest">Send test</button>' : '<div class="spacer"></div><button class="btn primary block" id="pushon">Turn on reminders</button>'}`;
+}
+function fmtTime(t) { const [h, m] = t.split(':').map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+function bindPush() {
+  const box = $('#pushbox'); if (!box) return;
+  const redraw = () => { box.innerHTML = pushSection(); bindPush(); };
+  $('#pushon') && ($('#pushon').onclick = async e => { e.target.disabled = true; e.target.textContent = 'Turning on…'; try { await pushSubscribe(true); toast('Reminders are on'); } catch (err) { toast(err.message); } redraw(); });
+  $('#pushoff') && ($('#pushoff').onclick = async () => { await pushDisable(); toast('Reminders off'); redraw(); });
+  $('#pushtest') && ($('#pushtest').onclick = async e => { e.target.disabled = true; e.target.textContent = 'Sending…'; try { await api('/test', { id: deviceId() }); toast('Test sent — check your notifications'); } catch (err) { toast(err.message); if (/again/.test(err.message)) { S.push.enabled = false; save(); } } redraw(); });
+}
+// On open: refresh the subscription once a day; keep the verse ref in sync when the daily verse changes.
+async function pushSync() {
+  if (!S.push || !S.push.enabled || !pushConfigured() || !pushSupported()) return;
+  try {
+    if (S.push.synced !== today() || Notification.permission !== 'granted') await pushSubscribe(false);
+    else if (currentRef() !== S.push.lastRef) { const ref = currentRef(); await api('/ref', { id: deviceId(), ref }); S.push.lastRef = ref; save(); }
+  } catch (e) { console.warn('push sync', e.message); }
+}
+var pushSyncT; function pushSyncSoon() { clearTimeout(pushSyncT); pushSyncT = setTimeout(pushSync, 1500); }
 // ---------- BOOT ----------
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => { r.update(); document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && r.update()); }).catch(e => console.warn('SW', e));
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => { r.update(); navigator.serviceWorker.ready.then(x => { swReg = x; }); document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && r.update()); }).catch(e => console.warn('SW', e));
   let reloaded = false; const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded && !flow) { reloaded = true; location.reload(); } });
 }
 window.RemEmber = { get state() { return S; }, Method: M };
 go('today');
+pushSync();
 })();
