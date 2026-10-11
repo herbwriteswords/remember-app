@@ -15,26 +15,43 @@
   ];
   const ESV_COPYRIGHT = 'Scripture quotations are from the ESV® Bible (The Holy Bible, English Standard Version®), © 2001 by Crossway, a publishing ministry of Good News Publishers. Used by permission. All rights reserved.';
 
-  const ALIASES = { ps: 'Psalms', psalm: 'Psalms', psa: 'Psalms', phil: 'Philippians', php: 'Philippians', rom: 'Romans', jn: 'John', gen: 'Genesis', prov: 'Proverbs', isa: 'Isaiah', matt: 'Matthew', mt: 'Matthew', eph: 'Ephesians', gal: 'Galatians', heb: 'Hebrews', tit: 'Titus', rev: 'Revelation', col: 'Colossians', jas: 'James', song: 'Song of Solomon', deut: 'Deuteronomy', josh: 'Joshua', mk: 'Mark', lk: 'Luke', ex: 'Exodus' };
+  const ALIASES = { ps: 'Psalms', pss: 'Psalms', psa: 'Psalms', psalm: 'Psalms', psalms: 'Psalms', phil: 'Philippians', php: 'Philippians', pp: 'Philippians', rom: 'Romans', ro: 'Romans', jn: 'John', jhn: 'John', gen: 'Genesis', ge: 'Genesis', prov: 'Proverbs', pr: 'Proverbs', prv: 'Proverbs', isa: 'Isaiah', jer: 'Jeremiah', matt: 'Matthew', mat: 'Matthew', mt: 'Matthew', eph: 'Ephesians', gal: 'Galatians', heb: 'Hebrews', tit: 'Titus', rev: 'Revelation', col: 'Colossians', jas: 'James', jms: 'James', 'song of songs': 'Song of Solomon', song: 'Song of Solomon', sos: 'Song of Solomon', 'canticles': 'Song of Solomon', deut: 'Deuteronomy', dt: 'Deuteronomy', josh: 'Joshua', judg: 'Judges', mk: 'Mark', mrk: 'Mark', lk: 'Luke', luk: 'Luke', ex: 'Exodus', exod: 'Exodus', lev: 'Leviticus', num: 'Numbers', eccl: 'Ecclesiastes', ecc: 'Ecclesiastes', qoh: 'Ecclesiastes', lam: 'Lamentations', ezek: 'Ezekiel', dan: 'Daniel', hos: 'Hosea', obad: 'Obadiah', mic: 'Micah', nah: 'Nahum', hab: 'Habakkuk', zeph: 'Zephaniah', hag: 'Haggai', zech: 'Zechariah', mal: 'Malachi', neh: 'Nehemiah', esth: 'Esther', sam: 'Samuel', sa: 'Samuel', sm: 'Samuel', kgs: 'Kings', ki: 'Kings', kin: 'Kings', chr: 'Chronicles', chron: 'Chronicles', cor: 'Corinthians', co: 'Corinthians', thess: 'Thessalonians', th: 'Thessalonians', tim: 'Timothy', ti: 'Timothy', pet: 'Peter', pe: 'Peter', jo: 'John', philem: 'Philemon', phm: 'Philemon', act: 'Acts' };
+  const NUMBERED = ['Samuel', 'Kings', 'Chronicles', 'Corinthians', 'Thessalonians', 'Timothy', 'Peter', 'John'];
   function findBook(s) {
-    s = s.trim().toLowerCase().replace(/\.$/, '').replace(/^(i{1,3})\s/, m => ({ 'i ': '1 ', 'ii ': '2 ', 'iii ': '3 ' })[m]);
-    const al = s.replace(/^(\d)\s*/, '$1 ');
-    const num = al.match(/^(\d) (.*)$/);
+    s = s.trim().toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ')
+      .replace(/^(iii|ii|i|first|second|third|1st|2nd|3rd)\s+/, m => ({ 'iii ': '3 ', 'ii ': '2 ', 'i ': '1 ', 'first ': '1 ', 'second ': '2 ', 'third ': '3 ', '1st ': '1 ', '2nd ': '2 ', '3rd ': '3 ' })[m]);
+    const al = s.replace(/^([123])\s*/, '$1 ');
+    const num = al.match(/^([123]) (.*)$/);
     const base = num ? num[2] : al;
     for (const [b] of BOOKS) if (b.toLowerCase() === al) return b;
-    const full = ALIASES[base] ? (num ? num[1] + ' ' + ALIASES[base] : ALIASES[base]) : null;
-    if (full && BOOKS.some(b => b[0] === full)) return full;
-    const hit = BOOKS.find(([b]) => b.toLowerCase().startsWith(al) && al.length >= 2);
+    if (ALIASES[base]) {
+      const name = ALIASES[base];
+      if (num && NUMBERED.includes(name)) { const f = num[1] + ' ' + name; if (BOOKS.some(b => b[0] === f)) return f; }
+      if (!num && BOOKS.some(b => b[0] === name)) return name;
+    }
+    const hit = BOOKS.find(([b]) => b.toLowerCase().startsWith(al) && al.replace(/\d /, '').length >= 2);
     return hit ? hit[0] : null;
+  }
+  // Undo iOS smart punctuation & friends: look-alike colons/dashes, NBSP, zero-width chars, fullwidth digits.
+  function normalizeRefInput(q) {
+    return String(q || '').normalize('NFKC')            // fullwidth ：１２ -> :12
+      .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')       // zero-width
+      .replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, ' ')
+      .replace(/[\u2236\uFE13\uFE55\uA789\u02D0\u0589\u05C3]/g, ':') // ratio sign, presentation colons, modifier colon…
+      .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')     // hyphen/en/em dashes, minus
+      .replace(/\s*([:\-,])\s*/g, '$1').replace(/(\d)\s*\.\s*(\d)/g, '$1:$2') // "4 . 12" / "4.12" -> 4:12
+      .replace(/\s+/g, ' ').trim()
+      .replace(/^(.*[a-z]\.?) (\d+) (\d+(?:-\d+)?)$/i, '$1 $2:$3'); // dictation: "Romans 8 28" -> Romans 8:28
   }
   // "Romans 8:28-30" -> {book, chapter, from, to, ref}
   function parseRef(q) {
-    const m = String(q).trim().match(/^(.+?)\s+(\d+)(?::(\d+)(?:\s*[-–]\s*(\d+))?)?$/);
+    const t = normalizeRefInput(q);
+    const m = t.match(/^([123]?\s?[a-z][a-z .]*?)\s?(\d+)(?::(\d+)(?:-(\d+))?)?$/i);
     if (!m) return null;
     const book = findBook(m[1]); if (!book) return null;
     const chapter = +m[2], from = m[3] ? +m[3] : null, to = m[4] ? +m[4] : from;
     const max = BOOKS.find(b => b[0] === book)[1]; if (chapter < 1 || chapter > max) return null;
-    if (from && to < from) return null;
+    if (from === 0 || (from && to < from)) return null;
     return { book, chapter, from, to, ref: refString(book, chapter, from, to) };
   }
   function refString(book, ch, a, b) { return a ? `${book} ${ch}:${a}${b && b !== a ? '–' + b : ''}` : `${book} ${ch}`; }
@@ -105,5 +122,5 @@
     const d = await fetchPassage(`${book} ${chapter}`, t);
     return Object.assign({}, d, { previewTr: t, why: translation === 'esv' ? 'no ESV key yet' : '' });
   }
-  g.Bible = { BOOKS, TRANSLATIONS, ESV_COPYRIGHT, parseRef, refString, fetchPassage, fetchChapter, findBook };
+  g.Bible = { normalizeRefInput, BOOKS, TRANSLATIONS, ESV_COPYRIGHT, parseRef, refString, fetchPassage, fetchChapter, findBook };
 })(window);

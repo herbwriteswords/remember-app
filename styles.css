@@ -83,7 +83,7 @@ label.field>span{display:block;font-size:13px;color:var(--muted);margin:0 2px 7p
 .tab.on svg{filter:drop-shadow(0 0 6px rgba(82,185,164,.55))}
 #sheet-wrap{position:fixed;inset:0;z-index:10}
 #sheet-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.6);animation:fade var(--t)}
-#sheet{position:absolute;left:50%;transform:translateX(-50%);bottom:0;width:100%;max-width:560px;max-height:92vh;overflow:auto;background:var(--bg2);border:1px solid var(--line);border-bottom:0;border-radius:24px 24px 0 0;padding:10px 20px 0;animation:up 240ms cubic-bezier(.2,.8,.2,1)}
+#sheet{position:absolute;left:50%;transform:translateX(-50%);bottom:var(--kb,0px);width:100%;max-width:560px;max-height:calc(var(--vvh,100vh) * .92);transition:bottom 200ms ease;overflow:auto;background:var(--bg2);border:1px solid var(--line);border-bottom:0;border-radius:24px 24px 0 0;padding:10px 20px 0;animation:up 240ms cubic-bezier(.2,.8,.2,1)}
 @keyframes up{from{transform:translate(-50%,40px);opacity:0}to{transform:translate(-50%,0);opacity:1}}
 .grab{width:40px;height:5px;border-radius:5px;background:var(--line);margin:4px auto 14px}
 #toast{position:fixed;left:50%;bottom:calc(var(--sab) + 92px);transform:translate(-50%,20px);opacity:0;background:var(--card2);border:1px solid var(--line);padding:11px 16px;border-radius:14px;font-size:14px;transition:all var(--t);pointer-events:none;z-index:20;max-width:90%}
@@ -132,3 +132,18 @@ label.field>span{display:block;font-size:13px;color:var(--muted);margin:0 2px 7p
 .swipe:not(.open):not(.full) .swipe-del{visibility:hidden}
 .swipe.open .swipe-del{visibility:visible}
 .swipe.gone{height:0!important;opacity:0}
+
+/* Inputs never exceed their container (iOS gives date/time inputs an intrinsic min-width) */
+input,select,textarea{max-width:100%;min-width:0;box-sizing:border-box}
+input[type=time],input[type=date],input[type=datetime-local],input[type=month]{-webkit-appearance:none;appearance:none;display:block;width:100%;min-width:0;max-width:100%;text-align:left;min-height:52px;line-height:1.2;font-size:17px}
+input[type=time]::-webkit-date-and-time-value{text-align:left;margin:0}
+input[type=time]::-webkit-calendar-picker-indicator{filter:invert(.7)}
+input[type=search]{-webkit-appearance:none;appearance:none;font-size:17px}
+input[type=search]::-webkit-search-decoration{-webkit-appearance:none}
+select,input[type=text],input[type=password]{font-size:17px} /* >=16px stops iOS zoom-on-focus */
+#qform{margin:0}
+#qform input{flex:1}
+.switch{position:relative;width:51px;height:31px;border-radius:999px;border:0;padding:0;background:#3a3532;cursor:pointer;flex:none;transition:background var(--t)}
+.switch i{position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.35);transition:transform var(--t)}
+.switch[aria-checked=true]{background:var(--ember)}
+.switch[aria-checked=true] i{transform:translateX(20px)}

@@ -343,7 +343,7 @@ function renderAdd() {
    ${a.tr === 'own' ? `<div class="note">Paste the text from any translation you own (NIV, NLT, CSB…). It stays on this device.</div>` : ''}
    <div class="seg" style="margin:14px 0">${[['search', 'Reference'], ['browse', 'Browse']].map(([k, l]) => `<button class="${a.mode === k ? 'on' : ''}" data-m="${k}">${l}</button>`).join('')}</div>`;
   if (a.mode === 'search') {
-    h += `<div class="row"><input type="search" id="q" placeholder="John 3:16 or Romans 8:28-30" value="${esc(a.q || '')}" enterkeyhint="search"><button class="btn" id="find">Find</button></div><div id="pv"></div>`;
+    h += `<form class="row" id="qform" action="#" autocomplete="off" novalidate><input type="search" id="q" name="q" placeholder="John 3:16 or Romans 8:28-30" value="${esc(a.q || '')}" inputmode="search" enterkeyhint="search" autocapitalize="words" autocorrect="off" spellcheck="false"><button class="btn" id="find" type="submit">Find</button></form></div><div id="pv"></div>`;
   } else if (!a.book) {
     h += `<div class="list" style="max-height:52vh;overflow:auto">` + B.BOOKS.map(([b, n]) => `<div class="item" data-b="${esc(b)}"><span class="grow">${esc(b)}</span><span class="meta">${n}</span><span class="chev">›</span></div>`).join('') + '</div>';
   } else if (!a.chapter) {
@@ -359,7 +359,7 @@ function renderAdd() {
     $('#cl', s).onclick = closeSheet;
     $('#tr', s).onchange = e => { a.tr = e.target.value; a.preview = null; const reload = a.chapter; if (reload) a.chapterData = null; renderAdd(); if (reload) loadChapter(); else if (a.q && a.mode === 'search' && B.parseRef(a.q)) doSearch(); };
     s.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { a.mode = b.dataset.m; renderAdd(); });
-    if ($('#find', s)) { const f = () => { a.q = $('#q', s).value; doSearch(); }; $('#find', s).onclick = f; $('#q', s).onkeydown = e => e.key === 'Enter' && f(); if (a.preview) showPreview(); }
+    if ($('#qform', s)) { $('#qform', s).addEventListener('submit', e => { e.preventDefault(); a.q = $('#q', s).value; doSearch(); }); if (a.preview) showPreview(); }
     s.querySelectorAll('[data-b]').forEach(b => b.onclick = () => { a.book = b.dataset.b; renderAdd(); });
     s.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { a.chapter = +b.dataset.c; a.sel.clear(); a.chapterData = null; renderAdd(); loadChapter(); });
     $('#bk', s) && ($('#bk', s).onclick = () => { if (a.chapter) a.chapter = null; else a.book = null; renderAdd(); });
@@ -396,14 +396,17 @@ async function saveSelection() {
   if (failed.length) toast(`Saved, but couldn’t load the text — ${failed[0]}. Open it in Library to paste or retry.`);
   else toast(a.tr === 'own' ? 'Saved — open it in Library to paste your text.' : `Saved ${n > 1 ? n + ' passages' : B.refString(a.book, a.chapter, rs[0][0], rs[0][1])}`);
 }
+function revealPreview() { requestAnimationFrame(() => { const el = $('#pv'); if (el && el.firstElementChild) el.firstElementChild.scrollIntoView({ block: 'start', behavior: 'smooth' }); }); }
 async function doSearch() {
   const a = add, s = $('#sheet'), pv = $('#pv', s);
+  const qi = $('#q', s); if (qi) qi.blur(); // dismiss the iOS keyboard so the result isn't hidden behind it
   const p = B.parseRef(a.q || '');
-  if (!p || !p.from) { pv.innerHTML = `<p class="small muted" style="margin-top:10px">Try a format like “John 3:16” or “Psalm 23:1-3”.</p>`; return; }
+  if (p && !p.from) { a.mode = 'browse'; a.book = p.book; a.chapter = p.chapter; a.sel.clear(); a.chapterData = null; renderAdd(); loadChapter(); return; } // "Hebrews 11" -> browse that chapter
+  if (!p) { a.preview = null; pv.innerHTML = `<div class="card errcard"><p style="color:var(--bad)">Couldn’t read that reference. Try “Romans 8:28”.</p><p class="small muted" style="margin-top:6px">You typed: “${esc(a.q || '')}”</p></div><div class="sheet-end"></div>`; revealPreview(); return; }
   const pr = a.preview = { p, text: '', err: '', tr: a.tr };
   if (a.tr === 'esv' && !esvKey()) pr.err = 'No ESV key yet — add it in Settings, or paste the text below.';
   else if (a.tr !== 'own') {
-    pv.innerHTML = `<div class="card"><div class="ref">${esc(p.ref)}<span class="tr">${trName(a.tr)}</span></div><p class="muted" style="margin-top:10px">Loading ${trName(a.tr)} text…</p></div>`;
+    pv.innerHTML = `<div class="card"><div class="ref">${esc(p.ref)}<span class="tr">${trName(a.tr)}</span></div><p class="muted loading" style="margin-top:10px">Loading ${trName(a.tr)} text…</p></div><div class="sheet-end"></div>`; revealPreview();
     try { const r = await B.fetchPassage(p.ref, a.tr, esvKey()); pr.text = r.text; } catch (e) { pr.err = e.message; }
   }
   if (add !== a || a.preview !== pr || !$('#pv')) return; // sheet changed while loading
@@ -417,6 +420,7 @@ function showPreview() {
    ${a.tr === 'esv' && text ? `<p class="copyright">${esc(B.ESV_COPYRIGHT)}</p>` : ''}</div>
    <div class="actionbar show"><button class="btn ghost sm" id="clearp">Clear</button><button class="btn primary grow" id="savep">Add ${esc(p.ref.replace('–', '-'))}</button></div>`;
   $('#retry', s) && ($('#retry', s).onclick = doSearch);
+  revealPreview();
   $('#clearp', s).onclick = () => { a.preview = null; a.q = ''; pv.innerHTML = ''; const q = $('#q', s); q.value = ''; q.focus(); };
   $('#savep', s).onclick = () => {
     const t = needPaste ? $('#paste', s).value.trim().replace(/\s+/g, ' ') : text;
@@ -440,7 +444,7 @@ function renderSettings() {
    <label class="field" style="margin-top:0"><span>Daily reminder time</span><input type="time" id="rem" value="${esc(st.reminder)}"></label>
    <p class="small muted">Honest note: a web app on iPhone can’t schedule local reminders by itself (iOS only allows push notifications from a server, and only after adding to Home Screen). So the reliable option is a repeating calendar alarm:</p>
    <div class="spacer"></div><button class="btn sm" id="ics">Add daily reminder to Calendar</button>
-   <div class="row between" style="margin-top:16px"><span>Show “days in a row”</span><button class="btn sm" id="streak">${st.showStreak ? 'On' : 'Off'}</button></div>
+   <div class="row between" style="margin-top:16px"><span>Show “days in a row”</span><button class="switch" id="streak" role="switch" aria-checked="${st.showStreak}" aria-label="Show days in a row"><i></i></button></div>
   </div>
   <h2>Your verses</h2><div class="card">
    <button class="btn block" id="seed">Load my current verses</button>
@@ -460,7 +464,7 @@ function renderSettings() {
   };
   $('#rem').onchange = e => { st.reminder = e.target.value; save(); };
   $('#ics').onclick = downloadICS;
-  $('#streak').onclick = () => { st.showStreak = !st.showStreak; save(); render(); };
+  $('#streak').onclick = e => { st.showStreak = !st.showStreak; save(); e.currentTarget.setAttribute('aria-checked', st.showStreak); };
   $('#seed').onclick = seed;
   $('#exp').onclick = () => { const blob = new Blob([JSON.stringify({ app: 'RemEmber', version: 1, exported: new Date().toISOString(), state: S }, null, 2)], { type: 'application/json' }); dl(blob, `remember-backup-${today()}.json`); };
   $('#imp').onclick = () => $('#file').click();
@@ -498,6 +502,15 @@ async function seed() {
   render();
 }
 
+// iOS keyboard: keep the bottom sheet above the keyboard and within the visible viewport.
+if (window.visualViewport) {
+  const vv = window.visualViewport, fit = () => {
+    const kb = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
+    document.documentElement.style.setProperty('--kb', kb + 'px');
+    document.documentElement.style.setProperty('--vvh', vv.height + 'px');
+  };
+  vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit();
+}
 // ---------- BOOT ----------
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => { r.update(); document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && r.update()); }).catch(e => console.warn('SW', e));
