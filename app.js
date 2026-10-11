@@ -67,7 +67,22 @@ let tab = 'today';
 const view = $('#view');
 function go(t) { tab = t; document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t)); flow = null; render(); window.scrollTo(0, 0); }
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => go(b.dataset.tab));
+const NAMEKEY = 'remember-name';
+const userName = () => (localStorage.getItem(NAMEKEY) || '').trim();
+function setName(n) { n = String(n || '').replace(/\s+/g, ' ').trim().slice(0, 40); n ? localStorage.setItem(NAMEKEY, n) : localStorage.removeItem(NAMEKEY); return n; }
+function renderWelcome() {
+  document.body.classList.add('welcoming');
+  view.innerHTML = `<div class="welcome"><div class="welcome-flame">${FLAME}</div><div class="brand" style="justify-content:center"><b>Rem<em>Ember</em></b></div>
+   <h1>What’s your name?</h1><p class="muted">So RemEmber can greet you. It stays on this device.</p>
+   <form id="wform" action="#" autocomplete="off" novalidate><input class="name-input" id="wname" type="text" maxlength="40" placeholder="Your first name" autocapitalize="words" enterkeyhint="done" aria-label="Your name">
+   <button class="btn primary block" id="wgo" type="submit" disabled>Continue</button></form></div>`;
+  const i = $('#wname'), b = $('#wgo');
+  i.oninput = () => { b.disabled = !i.value.trim(); };
+  $('#wform').onsubmit = e => { e.preventDefault(); if (!setName(i.value)) return; document.body.classList.remove('welcoming'); go('today'); };
+  setTimeout(() => i.focus(), 300);
+}
 function render() {
+  if (!userName()) return renderWelcome();
   view.style.animation = 'none'; void view.offsetWidth; view.style.animation = '';
   if (flow) return renderFlow();
   ({ today: renderToday, practice: renderPractice, library: renderLibrary, settings: renderSettings })[tab]();
@@ -124,7 +139,7 @@ function renderToday() {
   const cur = current(), due = dueReviews(), r = rhythm();
   const missingText = S.verses.filter(v => !v.text);
   let h = `<div class="topline">${brand()}</div>
-  <h1>${greeting()}, Herb.</h1>${streakChip(r)}<p class="muted">${cur.length || due.length ? 'Here’s what’s on the table today.' : S.verses.length ? 'You’re all caught up. Rest in it.' : 'Pick a verse to begin.'}</p>`;
+  <h1>${greeting()}${userName() ? ', ' + esc(userName()) : ''}.</h1>${streakChip(r)}<p class="muted">${cur.length || due.length ? 'Here’s what’s on the table today.' : S.verses.length ? 'You’re all caught up. Rest in it.' : 'Pick a verse to begin.'}</p>`;
   if (cur.length) {
     h += `<h2>Learning</h2>`;
     cur.forEach(v => {
@@ -448,6 +463,7 @@ function showPreview() {
 function renderSettings() {
   const st = S.settings;
   view.innerHTML = `${brand()}<h1>Settings</h1>
+  <h2>You</h2><div class="card"><label class="field" style="margin-top:0"><span>Name</span><input type="text" id="uname" maxlength="40" autocapitalize="words" autocomplete="off" value="${esc(userName())}" placeholder="Your first name"></label></div>
   <h2>Bible</h2><div class="card">
    <label class="field" style="margin-top:0"><span>Default translation</span><select id="deftr">${trOptions(st.translation)}</select></label>
    <label class="field"><span>ESV API key</span><input type="password" id="esv" placeholder="Paste your personal key" value="${esc(esvKey())}" autocomplete="off"></label>
@@ -469,6 +485,7 @@ function renderSettings() {
   <h2>Backup</h2><div class="card"><div class="row"><button class="btn grow" id="exp">Export JSON</button><button class="btn grow" id="imp">Import</button></div><input type="file" id="file" accept="application/json,.json" hidden>
    <div class="spacer"></div><button class="btn danger block" id="reset">Reset everything</button></div>
   <p class="copyright">${esc(B.ESV_COPYRIGHT)}</p><p class="copyright">RemEmber keeps everything on this device. Method rules: method.js.</p>`;
+  $('#uname').onchange = e => { const n = setName(e.target.value); if (!n) { e.target.value = userName(); toast('Name can’t be empty'); return; } e.target.value = n; toast('Hi, ' + n + '!'); };
   $('#deftr').onchange = e => { st.translation = e.target.value; save(); toast('Default translation: ' + trName(st.translation)); };
   $('#esv').onchange = e => { const k = cleanKey(e.target.value); e.target.value = k; k ? localStorage.setItem(ESVKEY, k) : localStorage.removeItem(ESVKEY); toast(k ? 'ESV key saved on this device' : 'ESV key removed'); fillMissingESV(); };
   $('#testkey').onclick = async () => {
