@@ -46,35 +46,64 @@
   function cache() { try { return JSON.parse(localStorage.getItem(CK) || '{}'); } catch { return {}; } }
   function putCache(k, v) { const c = cache(); c[k] = v; try { localStorage.setItem(CK, JSON.stringify(c)); } catch {} }
 
-  // Returns {ref, text, verses:[{verse,text}]}
-  async function fetchPassage(ref, translation, esvKey) {
+  // ESV request (official API). Note: ESV's *error* replies (401/403/429) carry no CORS headers,
+  // so in a browser they surface as a network failure — we explain that instead of hiding it.
+  const ESV_URL = 'https://api.esv.org/v3/passage/text/';
+  async function esvGet(q, key, extra = {}) {
+    const p = new URLSearchParams(Object.assign({ q, 'include-passage-references': 'false', 'include-verse-numbers': 'false', 'include-first-verse-numbers': 'false', 'include-footnotes': 'false', 'include-footnote-body': 'false', 'include-headings': 'false', 'include-short-copyright': 'false', 'include-copyright': 'false', 'include-passage-horizontal-lines': 'false', 'include-heading-horizontal-lines': 'false', 'include-selahs': 'true', 'indent-paragraphs': '0', 'indent-poetry': 'false', 'indent-poetry-lines': '0', 'indent-declares': '0', 'indent-psalm-doxology': '0', 'line-length': '0' }, extra));
+    let r;
+    try { r = await fetch(ESV_URL + '?' + p, { headers: { Authorization: 'Token ' + key }, cache: 'no-store' }); }
+    catch (e) {
+      if (!navigator.onLine) throw new Error('You’re offline — connect to load ESV text.');
+      throw new Error('ESV didn’t answer the request. Most often this means the API key was rejected (ESV’s error replies are hidden from web apps). Re-copy the key from api.esv.org → My API Applications and tap Test key.');
+    }
+    if (r.status === 401 || r.status === 403) throw new Error(`ESV rejected the API key (HTTP ${r.status}). Re-copy it from api.esv.org.`);
+    if (r.status === 429) throw new Error('ESV rate limit reached (HTTP 429). Try again in a little while.');
+    if (!r.ok) throw new Error(`ESV API error (HTTP ${r.status}).`);
+    const j = await r.json();
+    if (!j.passages || !j.passages.length || !j.passages.join('').trim()) throw new Error(`ESV found no passage for “${q}”.`);
+    return j;
+  }
+  const qref = ref => String(ref).replace(/[–—]/g, '-');
+  // Returns {ref, text, verses:[{verse,text}]|null}
+  async function fetchPassage(ref, translation, esvKey, opt = {}) {
     const key = translation + '|' + ref;
-    const hit = cache()[key]; if (hit) return hit;
+    const hit = !opt.noCache && cache()[key]; if (hit && hit.text) return hit;
     let out;
+    if (translation === 'own') throw new Error('“My text” has no source — paste it.');
     if (translation === 'esv') {
       if (!esvKey) throw new Error('ESV needs your free personal API key (Settings → ESV API key), or paste the text yourself.');
-      const p = new URLSearchParams({ q: ref.replace('–', '-'), 'include-passage-references': 'false', 'include-verse-numbers': 'false', 'include-first-verse-numbers': 'false', 'include-footnotes': 'false', 'include-footnote-body': 'false', 'include-headings': 'false', 'include-short-copyright': 'false', 'include-passage-horizontal-lines': 'false', 'include-heading-horizontal-lines': 'false', 'indent-paragraphs': '0', 'indent-poetry': 'false', 'indent-poetry-lines': '0', 'indent-declares': '0', 'indent-psalm-doxology': '0' });
-      const r = await fetch('https://api.esv.org/v3/passage/text/?' + p, { headers: { Authorization: 'Token ' + esvKey } });
-      if (r.status === 401 || r.status === 403) throw new Error('The ESV API key was rejected. Check it in Settings.');
-      if (!r.ok) throw new Error('ESV API error ' + r.status);
-      const j = await r.json();
-      const text = (j.passages || []).join(' ').replace(/\s+/g, ' ').trim();
-      if (!text) throw new Error('No ESV text found for ' + ref);
-      out = { ref: (j.canonical || ref).replace('-', '–'), text, verses: null };
+      const j = await esvGet(qref(ref), esvKey);
+      const text = j.passages.join(' ').replace(/\s+/g, ' ').replace(/\s*\(ESV\)\s*$/, '').trim();
+      out = { ref, canonical: j.canonical, text, verses: null };
     } else {
-      const r = await fetch('https://bible-api.com/' + encodeURIComponent(ref.replace('–', '-')) + '?translation=' + translation);
+      let r;
+      try { r = await fetch('https://bible-api.com/' + encodeURIComponent(qref(ref)) + '?translation=' + translation); }
+      catch { throw new Error(navigator.onLine ? 'Couldn’t reach bible-api.com — try again.' : 'You’re offline — connect to load the text.'); }
+      if (r.status === 429) throw new Error('Too many requests to bible-api.com (HTTP 429). Wait a minute and retry.');
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || j.error) throw new Error(j.error === 'not found' ? 'Not found in this translation.' : 'Could not load the verse (are you online?)');
+      if (!r.ok || j.error) throw new Error(j.error === 'not found' ? `${ref} wasn’t found in this translation.` : `Couldn’t load the verse (HTTP ${r.status}).`);
       const verses = j.verses.map(v => ({ verse: v.verse, chapter: v.chapter, text: cleanPD(v.text) }));
       out = { ref, text: verses.map(v => v.text).join(' '), verses };
     }
     putCache(key, out);
     return out;
   }
-  // Chapter listing for browsing (verse numbers + preview text)
-  async function fetchChapter(book, chapter, translation) {
-    const t = (translation === 'esv' || translation === 'own') ? 'web' : translation;
-    return fetchPassage(`${book} ${chapter}`, t);
+  // Chapter listing for browsing, in the selected translation when possible.
+  async function fetchChapter(book, chapter, translation, esvKey) {
+    if (translation === 'esv' && esvKey) {
+      const ck = 'esvchap|' + book + ' ' + chapter, hit = cache()[ck]; if (hit) return hit;
+      try {
+        const j = await esvGet(`${book} ${chapter}`, esvKey, { 'include-verse-numbers': 'true', 'include-first-verse-numbers': 'true' });
+        const raw = j.passages.join(' ').replace(/\s+/g, ' ').replace(/\s*\(ESV\)\s*$/, '');
+        const verses = []; raw.replace(/\[(\d+)\]\s*([^\[]*)/g, (_, n, t) => { verses.push({ verse: +n, chapter, text: t.trim() }); });
+        if (verses.length) { const out = { ref: `${book} ${chapter}`, text: raw, verses, previewTr: 'esv' }; putCache(ck, out); return out; }
+      } catch (e) { const d = await fetchPassage(`${book} ${chapter}`, 'web'); return Object.assign({}, d, { previewTr: 'web', why: e.message.split('.')[0] }); }
+    }
+    const free = TRANSLATIONS.some(t => t.id === translation && !t.needsKey && t.id !== 'own');
+    const t = free ? translation : 'web';
+    const d = await fetchPassage(`${book} ${chapter}`, t);
+    return Object.assign({}, d, { previewTr: t, why: translation === 'esv' ? 'no ESV key yet' : '' });
   }
   g.Bible = { BOOKS, TRANSLATIONS, ESV_COPYRIGHT, parseRef, refString, fetchPassage, fetchChapter, findBook };
 })(window);

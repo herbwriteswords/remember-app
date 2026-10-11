@@ -1,6 +1,6 @@
 /* RemEmber — app UI. Data lives in localStorage on this device only. */
 (() => {
-const M = window.Method, B = window.Bible, T = window.Themes;
+const M = window.Method, B = window.Bible;
 const KEY = 'remember.state.v1', ESVKEY = 'remember.esvkey';
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -19,14 +19,14 @@ function load() {
   return { verses: [], settings: { translation: 'esv', reminder: '07:30', showStreak: true }, days: [] };
 }
 function save() { localStorage.setItem(KEY, JSON.stringify(S)); }
-const esvKey = () => localStorage.getItem(ESVKEY) || '';
+const cleanKey = k => String(k || '').replace(/^\s*(authorization:\s*)?token\s+/i, '').replace(/\s+/g, '').replace(/^["']|["']$/g, '');
+const esvKey = () => cleanKey(localStorage.getItem(ESVKEY));
 const uid = () => Math.random().toString(36).slice(2, 10);
 function trName(id) { return (B.TRANSLATIONS.find(t => t.id === id) || {}).name || id.toUpperCase(); }
 
 function addVerse(p) {
-  const v = Object.assign({ id: uid(), tags: [], prompts: [], stage: 0, cleanStreak: 0, missStreak: 0, history: [], added: today(), due: today(), status: 'queued', order: Date.now() + Math.random() }, p);
+  const v = Object.assign({ id: uid(), stage: 0, cleanStreak: 0, missStreak: 0, history: [], added: today(), due: today(), status: 'queued', order: Date.now() + Math.random() }, p);
   v.passage = `${v.book} ${v.chapter}`;
-  if (!v.tags.length) v.tags = T.suggestTags(v.book, v.chapter, v.from, v.to);
   S.verses.push(v); promoteQueue(); save(); return v;
 }
 // One new verse at a time: when nothing is in the daily stage, the next queued verse becomes current.
@@ -97,7 +97,7 @@ function renderToday() {
     h += `<h2>Review · ${due.length}</h2><div class="list">` + due.map(v => `<div class="item" data-practice="${v.id}"><div class="grow"><div class="ref">${esc(v.ref)}</div><div class="meta">${M.METHOD.stages[v.stage].label} review</div></div><span class="chev">›</span></div>`).join('') + '</div>';
   }
   if (S.verses.some(v => v.text && v.status !== 'queued')) {
-    h += `<h2>Drills</h2><div class="row"><button class="btn grow" data-act="situational">💬 Situation</button><button class="btn grow" data-act="recall">📖 Recall by reference</button></div>`;
+    h += `<h2>Drill</h2><div class="row"><button class="btn grow" data-act="recall">📖 Recall by reference</button></div>`;
   }
   if (missingText.length) h += `<div class="note">${missingText.length} saved verse${missingText.length > 1 ? 's need' : ' needs'} text. Open it in Library to paste it, or add your ESV key in Settings.</div>`;
   if (!S.verses.length) h += `<div class="empty">${FLAME}<p>Your library is empty.</p><div class="spacer"></div><button class="btn primary" data-act="add">${ICON.plus} Add a verse</button></div>`;
@@ -106,7 +106,7 @@ function renderToday() {
 function bind() {
   view.querySelectorAll('[data-practice]').forEach(b => b.onclick = () => startPractice(b.dataset.practice));
   view.querySelectorAll('[data-combo]').forEach(b => b.onclick = () => startPractice(b.dataset.combo, { combo: true }));
-  view.querySelectorAll('[data-act]').forEach(b => b.onclick = () => ({ add: openAdd, situational: startSituational, recall: startRecall })[b.dataset.act]());
+  view.querySelectorAll('[data-act]').forEach(b => b.onclick = () => ({ add: openAdd, recall: startRecall })[b.dataset.act]());
 }
 
 // ---------- PRACTICE TAB ----------
@@ -116,7 +116,6 @@ function renderPractice() {
   const items = [];
   cur.forEach(v => items.push([`data-practice="${v.id}"`, 'Today’s verse', v.ref]));
   due.forEach(v => items.push([`data-practice="${v.id}"`, 'Review', v.ref]));
-  items.push(['data-act="situational"', 'Situational drill', 'A friend says… which passage would you share?']);
   items.push(['data-act="recall"', 'Recall by reference', 'Recite a verse from its reference alone']);
   h += items.map(([a, t, s]) => `<div class="item" ${a}><div class="grow"><div style="font-weight:600">${esc(t)}</div><div class="meta">${esc(s)}</div></div><span class="chev">›</span></div>`).join('') + '</div>';
   if (ready.length) h += `<h2>Any verse</h2><div class="list">` + ready.map(v => `<div class="item" data-practice="${v.id}"><div class="grow"><div class="ref">${esc(v.ref)}</div></div><span class="status ${v.status}">${v.status}</span></div>`).join('') + '</div>';
@@ -137,7 +136,6 @@ function stepBar(i) { return `<div class="steps">${[0, 1, 2].map(k => `<i class=
 function head(back = true) { return `<div class="row between">${back ? '<button class="btn ghost sm" id="x">✕ Close</button>' : '<span></span>'}<span class="small faint">${esc(flow.title || (flow.mode === 'combo' ? 'Passage review' : 'Practice'))}</span></div>`; }
 function renderFlow() {
   const f = flow; let h = '';
-  if (f.mode === 'situational' && f.step === 'question') return renderQuestion();
   if (f.step === 'read') {
     const warmText = [esc(f.text), esc(M.firstLetters(f.text)), '<span class="hidden">— say it from memory —</span>'][f.warm];
     h = head() + stepBar(0) + `<div class="card hero"><div class="ref">${esc(f.ref)}<span class="tr">${trName(f.translation)}</span></div>
@@ -224,33 +222,7 @@ function startMic() {
 }
 function stopMic() { if (rec) { try { rec.stop(); } catch {} rec = null; } }
 
-// ---------- DRILLS ----------
-function promptsFor(v) {
-  const own = (v.prompts || []).filter(Boolean);
-  if (own.length) return own;
-  return [...new Set(v.tags.flatMap(t => T.prompts[t] || []))];
-}
-function startSituational() {
-  const pool = S.verses.filter(v => v.text && v.status !== 'queued' && promptsFor(v).length);
-  if (!pool.length) return toast('Add a prompt or tag to a saved verse first (Library → verse).');
-  const v = pool[Math.floor(Math.random() * pool.length)];
-  const ps = promptsFor(v), q = ps[Math.floor(Math.random() * ps.length)];
-  const others = S.verses.filter(o => o.id !== v.id && o.text && o.status !== 'queued' && !promptsFor(o).includes(q)).sort(() => Math.random() - .5).slice(0, 3);
-  const choices = [v, ...others].sort(() => Math.random() - .5).map(o => ({ id: o.id, ref: o.ref }));
-  flow = { mode: 'situational', step: 'question', id: v.id, ref: v.ref, text: v.text, translation: v.translation, q, choices, picked: null, warm: 0, reveal: 0, title: 'Situational drill', from: tab };
-  if (tab !== 'practice') { tab = 'practice'; document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === 'practice')); }
-  render();
-}
-function renderQuestion() {
-  const f = flow;
-  let h = head() + `<div class="card hero"><div class="small muted">Which passage would you share?</div><p class="verse big" style="margin-top:8px">${esc(f.q)}</p></div><h2>Name the reference</h2>`;
-  h += f.choices.length > 1 ? f.choices.map(c => `<button class="btn choice ${f.picked ? (c.id === f.id ? 'right' : c.id === f.picked ? 'wrongc' : '') : ''}" data-c="${c.id}">${esc(c.ref)}</button>`).join('') : `<p class="muted small">Only one verse is ready — say its reference, then recite.</p>`;
-  if (f.picked || f.choices.length < 2) h += `<p class="small muted" style="margin:12px 2px">${f.picked === f.id || f.choices.length < 2 ? 'Yes — that’s the one.' : 'Good thought — this one fits best here.'} Now recite it, reference before and after.</p><button class="btn primary block" id="go">Recite ${esc(f.ref)}</button>`;
-  view.innerHTML = h;
-  view.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { if (!f.picked) { f.picked = b.dataset.c; render(); } });
-  $('#go') && ($('#go').onclick = () => { f.step = 'recite'; render(); });
-  $('#x').onclick = () => { flow = null; render(); };
-}
+// ---------- RECALL DRILL ----------
 function startRecall() {
   const pool = S.verses.filter(v => v.text && v.status !== 'queued');
   if (!pool.length) return toast('Save a verse first.');
@@ -277,21 +249,13 @@ function renderLibrary() {
 }
 function openVerse(id) {
   const v = S.verses.find(x => x.id === id); if (!v) return;
-  const sugg = Object.keys(T.prompts).filter(t => !v.tags.includes(t));
   sheet(`<div class="row between"><span class="ref" style="font-size:18px">${esc(v.ref)}<span class="tr">${trName(v.translation)}</span></span><span class="status ${v.status}">${v.status}</span></div>
-    ${v.text ? `<p class="verse">${esc(v.text)}</p>` : `<p class="muted" style="margin-top:10px">Paste the text for this verse (${trName(v.translation)}):</p>`}
+    ${v.text ? `<p class="verse">${esc(v.text)}</p>` : `<p class="muted" style="margin-top:10px">Paste the text for this verse (${trName(v.translation)})${v.translation !== 'own' ? ', or load it again:' : ':'}</p>${v.translation !== 'own' ? '<button class="btn sm" id="refetch" style="margin-top:8px">Load text</button>' : ''}`}
     <label class="field"><span>${v.text ? 'Edit text' : 'Verse text'}</span><textarea id="vt" style="min-height:${v.text ? 90 : 140}px;font-size:16px">${esc(v.text)}</textarea></label>
     <p class="small muted">${v.text ? `Stage: ${M.METHOD.stages[v.stage].label} · next ${niceDate(v.due)} · mastery ${Math.round(100 * M.mastery(v))}% · ${v.history.length} recitals` : ''}</p>
-    <h2>Tags</h2><div id="tags">${v.tags.map(t => `<span class="tag">${esc(t)}<button data-rt="${esc(t)}">×</button></span>`).join('')}</div>
-    <div style="margin-top:6px">${sugg.map(t => `<span class="tag sugg" data-at="${t}">+ ${t}</span>`).join('')}</div>
-    <div class="row" style="margin-top:8px"><input type="text" id="newtag" placeholder="Your own tag"><button class="btn sm" id="addtag">Add</button></div>
-    <h2>Situational prompts</h2><p class="small muted" style="margin:-4px 2px 8px">Your own prompts win. Leave empty to use suggestions from the tags. One per line.</p>
-    <textarea id="prompts" style="min-height:90px;font-size:15px;font-family:var(--sans)" placeholder="${esc(promptsFor(v)[0] || 'A friend says…')}">${esc((v.prompts || []).join('\n'))}</textarea>
     <div class="row" style="margin-top:16px"><button class="btn danger sm" id="rm">Remove</button><span class="grow"></span><button class="btn sm" id="sv">Save</button><button class="btn primary sm" id="pr" ${v.text ? '' : 'disabled'}>Practice</button></div>`, s => {
-    const persist = () => { const t = $('#vt', s).value.trim().replace(/\s+/g, ' '); if (t !== v.text) { v.text = t; } v.prompts = $('#prompts', s).value.split('\n').map(x => x.trim()).filter(Boolean); promoteQueue(); save(); };
-    s.querySelectorAll('[data-rt]').forEach(b => b.onclick = () => { persist(); v.tags = v.tags.filter(t => t !== b.dataset.rt); save(); openVerse(id); });
-    s.querySelectorAll('[data-at]').forEach(b => b.onclick = () => { persist(); v.tags.push(b.dataset.at); save(); openVerse(id); });
-    $('#addtag', s).onclick = () => { const t = $('#newtag', s).value.trim().toLowerCase(); if (t && !v.tags.includes(t)) { persist(); v.tags.push(t); save(); openVerse(id); } };
+    const persist = () => { const t = $('#vt', s).value.trim().replace(/\s+/g, ' '); if (t !== v.text) { v.text = t; } promoteQueue(); save(); };
+    $('#refetch', s) && ($('#refetch', s).onclick = async e => { e.target.textContent = 'Loading…'; try { v.text = (await B.fetchPassage(v.ref, v.translation, esvKey(), { noCache: true })).text; promoteQueue(); save(); openVerse(id); render(); } catch (err) { e.target.textContent = 'Load text'; toast(err.message); } });
     $('#sv', s).onclick = () => { persist(); closeSheet(); toast('Saved'); render(); };
     $('#pr', s).onclick = () => { persist(); closeSheet(); startPractice(id); };
     $('#rm', s).onclick = () => { if (confirm(`Remove ${v.ref} from your library?`)) { S.verses = S.verses.filter(x => x.id !== id); promoteQueue(); save(); closeSheet(); render(); toast('Removed'); } };
@@ -320,57 +284,70 @@ function renderAdd() {
     const n = B.BOOKS.find(x => x[0] === a.book)[1];
     h += `<button class="btn ghost sm" id="bk">‹ Books</button><h2>${esc(a.book)} · chapter</h2><div class="grid">` + Array.from({ length: n }, (_, i) => `<button data-c="${i + 1}">${i + 1}</button>`).join('') + '</div>';
   } else {
-    h += `<button class="btn ghost sm" id="bk">‹ ${esc(a.book)}</button><h2>${esc(a.book)} ${a.chapter} · tap verses</h2><div id="vl">${a.chapterData ? a.chapterData.verses.map(v => `<div class="vpick ${a.sel.has(v.verse) ? 'on' : ''}" data-v="${v.verse}"><sup>${v.verse}</sup><span>${esc(v.text)}</span></div>`).join('') : '<p class="muted">Loading…</p>'}</div>
-     ${a.tr !== 'web' && a.chapterData ? `<p class="small faint">Browsing preview shown in WEB; your verse is saved in ${trName(a.tr)}.</p>` : ''}`;
+    h += `<button class="btn ghost sm" id="bk">‹ ${esc(a.book)}</button><h2>${esc(a.book)} ${a.chapter} · tap verses</h2><div id="vl">${a.chapterErr && !a.chapterData ? `<p class="small" style="color:var(--bad)">${esc(a.chapterErr)}</p>` : a.chapterData ? a.chapterData.verses.map(v => `<div class="vpick ${a.sel.has(v.verse) ? 'on' : ''}" data-v="${v.verse}"><sup>${v.verse}</sup><span>${esc(v.text)}</span></div>`).join('') : '<p class="muted">Loading…</p>'}</div>
+     ${a.chapterData && a.chapterData.previewTr && a.chapterData.previewTr !== a.tr ? `<p class="small faint">Preview shown in ${trName(a.chapterData.previewTr)}${a.chapterData.why ? ' (' + esc(a.chapterData.why) + ')' : ''}. Your verses are saved in ${trName(a.tr)}.</p>` : ''}`;
   }
   const selCount = a.mode === 'browse' ? a.sel.size : 0;
   h += `<div class="spacer"></div>${a.mode === 'browse' && a.chapter ? `<button class="btn primary block" id="savesel" ${selCount ? '' : 'disabled'}>Save ${selCount ? selRef() : 'selection'}</button>` : ''}`;
   sheet(h, s => {
     $('#cl', s).onclick = closeSheet;
-    $('#tr', s).onchange = e => { a.tr = e.target.value; a.preview = null; renderAdd(); };
+    $('#tr', s).onchange = e => { a.tr = e.target.value; a.preview = null; const reload = a.chapter; if (reload) a.chapterData = null; renderAdd(); if (reload) loadChapter(); else if (a.q && a.mode === 'search' && B.parseRef(a.q)) doSearch(); };
     s.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { a.mode = b.dataset.m; renderAdd(); });
     if ($('#find', s)) { const f = () => { a.q = $('#q', s).value; doSearch(); }; $('#find', s).onclick = f; $('#q', s).onkeydown = e => e.key === 'Enter' && f(); if (a.preview) showPreview(); }
     s.querySelectorAll('[data-b]').forEach(b => b.onclick = () => { a.book = b.dataset.b; renderAdd(); });
-    s.querySelectorAll('[data-c]').forEach(b => b.onclick = async () => { a.chapter = +b.dataset.c; a.sel.clear(); a.chapterData = null; renderAdd(); try { a.chapterData = await B.fetchChapter(a.book, a.chapter, a.tr); } catch (e) { toast(e.message); } if (add === a && a.chapter) renderAdd(); });
+    s.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { a.chapter = +b.dataset.c; a.sel.clear(); a.chapterData = null; renderAdd(); loadChapter(); });
     $('#bk', s) && ($('#bk', s).onclick = () => { if (a.chapter) a.chapter = null; else a.book = null; renderAdd(); });
     s.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { const n = +b.dataset.v; a.sel.has(n) ? a.sel.delete(n) : a.sel.add(n); b.classList.toggle('on'); const sb = $('#savesel', s); sb.disabled = !a.sel.size; sb.textContent = a.sel.size ? 'Save ' + selRef() : 'Save selection'; });
     $('#savesel', s) && ($('#savesel', s).onclick = saveSelection);
   });
 }
+async function loadChapter() {
+  const a = add, key = a.book + a.chapter + a.tr; a.chapterErr = '';
+  try { const d = await B.fetchChapter(a.book, a.chapter, a.tr, esvKey()); if (add === a && key === a.book + a.chapter + a.tr) a.chapterData = d; }
+  catch (e) { a.chapterErr = e.message; }
+  if (add === a && a.chapter) renderAdd();
+}
 // Contiguous runs of selected verses become separate entries (e.g. 1-3 and 6).
 function runs() { const v = [...add.sel].sort((x, y) => x - y), out = []; v.forEach(n => { const l = out[out.length - 1]; if (l && n === l[1] + 1) l[1] = n; else out.push([n, n]); }); return out; }
 function selRef() { return runs().map(([x, y]) => B.refString(add.book, add.chapter, x, y)).join(', '); }
 async function saveSelection() {
-  const a = add; const rs = runs(); let n = 0;
+  const a = add; const rs = runs(); const btn = $('#savesel'); if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  let n = 0, failed = [];
   for (const [x, y] of rs) {
     const ref = B.refString(a.book, a.chapter, x, y);
     let text = '';
-    if (a.tr === 'own') text = '';
-    else if (a.tr === 'esv' && !esvKey()) text = '';
-    else { try { text = (await B.fetchPassage(ref, a.tr, esvKey())).text; } catch (e) { toast(e.message); } }
-    if (!text && a.tr !== 'esv' && a.tr !== 'own' && a.chapterData && a.tr === 'web') text = a.chapterData.verses.filter(v => v.verse >= x && v.verse <= y).map(v => v.text).join(' ');
+    const fromPreview = () => a.chapterData && a.chapterData.previewTr === a.tr ? a.chapterData.verses.filter(v => v.verse >= x && v.verse <= y).map(v => v.text).join(' ') : '';
+    if (a.tr !== 'own') {
+      if (a.tr === 'esv' && !esvKey()) failed.push(`${ref}: no ESV key yet`);
+      else { try { text = (await B.fetchPassage(ref, a.tr, esvKey())).text; } catch (e) { text = fromPreview(); if (!text) failed.push(`${ref}: ${e.message}`); } }
+    }
     addVerse({ ref, book: a.book, chapter: a.chapter, from: x, to: y, translation: a.tr, text }); n++;
   }
-  closeSheet(); toast(`Saved ${n > 1 ? n + ' passages' : rs.length ? B.refString(a.book, a.chapter, rs[0][0], rs[0][1]) : ''}`); render();
+  closeSheet(); render();
+  if (failed.length) toast(`Saved, but couldn’t load the text — ${failed[0]}. Open it in Library to paste or retry.`);
+  else toast(a.tr === 'own' ? 'Saved — open it in Library to paste your text.' : `Saved ${n > 1 ? n + ' passages' : B.refString(a.book, a.chapter, rs[0][0], rs[0][1])}`);
 }
 async function doSearch() {
   const a = add, s = $('#sheet'), pv = $('#pv', s);
   const p = B.parseRef(a.q || '');
   if (!p || !p.from) { pv.innerHTML = `<p class="small muted" style="margin-top:10px">Try a format like “John 3:16” or “Psalm 23:1-3”.</p>`; return; }
-  a.preview = { p, text: '', err: '' };
-  if (a.tr !== 'own' && !(a.tr === 'esv' && !esvKey())) {
-    pv.innerHTML = '<p class="muted" style="margin-top:12px">Loading…</p>';
-    try { const r = await B.fetchPassage(p.ref, a.tr, esvKey()); a.preview.text = r.text; } catch (e) { a.preview.err = e.message; }
+  const pr = a.preview = { p, text: '', err: '', tr: a.tr };
+  if (a.tr === 'esv' && !esvKey()) pr.err = 'No ESV key yet — add it in Settings, or paste the text below.';
+  else if (a.tr !== 'own') {
+    pv.innerHTML = `<div class="card"><div class="ref">${esc(p.ref)}<span class="tr">${trName(a.tr)}</span></div><p class="muted" style="margin-top:10px">Loading ${trName(a.tr)} text…</p></div>`;
+    try { const r = await B.fetchPassage(p.ref, a.tr, esvKey()); pr.text = r.text; } catch (e) { pr.err = e.message; }
   }
+  if (add !== a || a.preview !== pr || !$('#pv')) return; // sheet changed while loading
   showPreview();
 }
 function showPreview() {
-  const a = add, s = $('#sheet'), pv = $('#pv', s), { p, text, err } = a.preview;
+  const a = add, s = $('#sheet'), pv = $('#pv', s), { p, text, err } = a.preview; if (!pv) return;
   const needPaste = !text;
   pv.innerHTML = `<div class="card"><div class="ref">${esc(p.ref)}<span class="tr">${trName(a.tr)}</span></div>
-   ${text ? `<p class="verse">${esc(text)}</p>` : `${err ? `<p class="small" style="color:var(--bad);margin-top:8px">${esc(err)}</p>` : ''}<textarea id="paste" style="min-height:120px;font-size:16px;margin-top:10px" placeholder="Paste the verse text here (or leave blank and add it later)"></textarea>`}
+   ${text ? `<p class="verse">${esc(text)}</p>` : `${err ? `<p class="small" style="color:var(--bad);margin-top:8px">${esc(err)}</p><button class="btn sm" id="retry" style="margin-top:8px">Retry</button>` : ''}<textarea id="paste" style="min-height:120px;font-size:16px;margin-top:10px" placeholder="Paste the verse text here (or leave blank and add it later)"></textarea>`}
    ${a.tr === 'esv' && text ? `<p class="copyright">${esc(B.ESV_COPYRIGHT)}</p>` : ''}</div>
    <button class="btn primary block" id="savep">Save ${esc(p.ref)}</button>`;
+  $('#retry', s) && ($('#retry', s).onclick = doSearch);
   $('#savep', s).onclick = () => {
     const t = needPaste ? $('#paste', s).value.trim().replace(/\s+/g, ' ') : text;
     addVerse({ ref: p.ref, book: p.book, chapter: p.chapter, from: p.from, to: p.to, translation: a.tr, text: t });
@@ -385,7 +362,8 @@ function renderSettings() {
   <h2>Bible</h2><div class="card">
    <label class="field" style="margin-top:0"><span>Default translation</span><select id="deftr">${trOptions(st.translation)}</select></label>
    <label class="field"><span>ESV API key</span><input type="password" id="esv" placeholder="Paste your personal key" value="${esc(esvKey())}" autocomplete="off"></label>
-   <p class="small muted">Free for personal use at <b>api.esv.org</b> (create an account → API key). Stored only on this device; never uploaded or included in backups.</p>
+   <div class="row"><button class="btn sm" id="testkey">Test key</button><span class="small muted grow" id="testout"></span></div>
+   <p class="small muted" style="margin-top:10px">Free for personal use at <b>api.esv.org</b> (create an account → API key). Stored only on this device; never uploaded or included in backups.</p>
    <p class="small muted" style="margin-top:8px">Built-in free texts: KJV, WEB, ASV, BBE, Darby, OEB (public domain, via bible-api.com). NIV and NLT have no free public API — use “Paste my own text”.</p>
   </div>
   <h2>Rhythm</h2><div class="card">
@@ -402,7 +380,14 @@ function renderSettings() {
    <div class="spacer"></div><button class="btn danger block" id="reset">Reset everything</button></div>
   <p class="copyright">${esc(B.ESV_COPYRIGHT)}</p><p class="copyright">RemEmber keeps everything on this device. Method rules: method.js.</p>`;
   $('#deftr').onchange = e => { st.translation = e.target.value; save(); toast('Default translation: ' + trName(st.translation)); };
-  $('#esv').onchange = e => { const k = e.target.value.trim(); k ? localStorage.setItem(ESVKEY, k) : localStorage.removeItem(ESVKEY); toast(k ? 'ESV key saved on this device' : 'ESV key removed'); fillMissingESV(); };
+  $('#esv').onchange = e => { const k = cleanKey(e.target.value); e.target.value = k; k ? localStorage.setItem(ESVKEY, k) : localStorage.removeItem(ESVKEY); toast(k ? 'ESV key saved on this device' : 'ESV key removed'); fillMissingESV(); };
+  $('#testkey').onclick = async () => {
+    const k = cleanKey($('#esv').value); if (k !== esvKey()) { k ? localStorage.setItem(ESVKEY, k) : localStorage.removeItem(ESVKEY); $('#esv').value = k; }
+    const out = $('#testout'); if (!k) { out.textContent = 'Paste your key first.'; return; }
+    out.textContent = 'Testing…'; out.style.color = '';
+    try { const r = await B.fetchPassage('John 11:35', 'esv', k, { noCache: true }); out.textContent = `✓ Works: “${r.text}” (${r.ref})`; out.style.color = 'var(--ok)'; fillMissingESV(); }
+    catch (e) { out.textContent = '✕ ' + e.message; out.style.color = 'var(--bad)'; }
+  };
   $('#rem').onchange = e => { st.reminder = e.target.value; save(); };
   $('#ics').onclick = downloadICS;
   $('#streak').onclick = () => { st.showStreak = !st.showStreak; save(); render(); };
@@ -421,6 +406,7 @@ function downloadICS() {
 async function fillMissingESV() {
   if (!esvKey()) return; let n = 0;
   for (const v of S.verses.filter(v => !v.text && v.translation === 'esv')) { try { v.text = (await B.fetchPassage(v.ref, 'esv', esvKey())).text; n++; } catch (e) { toast(e.message); break; } }
+  if (n) render();
   if (n) { promoteQueue(); save(); toast(`Fetched ESV text for ${n} verse${n > 1 ? 's' : ''}`); }
 }
 async function seed() {
@@ -443,7 +429,11 @@ async function seed() {
 }
 
 // ---------- BOOT ----------
-if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(e => console.warn('SW', e));
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => { r.update(); document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && r.update()); }).catch(e => console.warn('SW', e));
+  let reloaded = false; const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded && !flow) { reloaded = true; location.reload(); } });
+}
 window.RemEmber = { get state() { return S; }, Method: M };
 go('today');
 })();
