@@ -5,7 +5,7 @@ const KEY = 'remember.state.v1', ESVKEY = 'remember.esvkey';
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const today = () => M.ymd(new Date());
-const FLAME = '<svg viewBox="0 0 24 24"><defs><linearGradient id="fl" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#e2541c"/><stop offset="1" stop-color="#ffc27a"/></linearGradient></defs><path fill="url(#fl)" d="M12 2.5c.9 2.9 4.6 4.6 4.6 9.1a4.6 4.6 0 0 1-9.2 0c0-2 .9-3.3 2-4.3.2 1.7 1.1 2.7 2.2 3.1-.7-2.5-.5-5.2.4-7.9Z"/></svg>';
+const FLAME = '<svg viewBox="0 0 24 24"><path fill="#52b9a4" d="M12 2.5c.9 2.9 4.6 4.6 4.6 9.1a4.6 4.6 0 0 1-9.2 0c0-2 .9-3.3 2-4.3.2 1.7 1.1 2.7 2.2 3.1-.7-2.5-.5-5.2.4-7.9Z"/><rect x="10.05" y="11.6" width="1.15" height="2.9" rx=".58" fill="#0a1614" transform="rotate(-14 10.6 13)"/><rect x="12.85" y="11.6" width="1.15" height="2.9" rx=".58" fill="#0a1614" transform="rotate(-14 13.4 13)"/></svg>';
 const ICON = {
   mic: '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   bulb: '<svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3Z"/></svg>',
