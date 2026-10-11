@@ -13,16 +13,6 @@
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="stylesheet" href="styles.css">
-<script>
-/* Measure the iOS standalone "chin" (layout viewport shorter than the screen) before first paint. */
-(function(){function m(){var s=window.screen,portrait=innerHeight>=innerWidth,phys=portrait?Math.max(s.height,s.width):Math.min(s.height,s.width);
-var standalone=(window.matchMedia&&matchMedia('(display-mode: standalone)').matches)||navigator.standalone===true;
-var kbOpen=window.visualViewport&&(innerHeight-visualViewport.height)>120;
-var gap=standalone&&!kbOpen?Math.round(phys-innerHeight):0;if(gap<0||gap>120)gap=0;
-document.documentElement.style.setProperty('--chin',gap+'px');}
-m();addEventListener('resize',m);addEventListener('orientationchange',function(){setTimeout(m,300)});addEventListener('pageshow',m);
-window.__measureChin=m;})();
-</script>
 
 </head>
 <body>

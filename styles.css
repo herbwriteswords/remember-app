@@ -5,7 +5,7 @@
   --serif:ui-serif,"New York","Iowan Old Style",Georgia,"Times New Roman",serif;
   --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,system-ui,sans-serif;
   --r:18px;--t:200ms cubic-bezier(.2,.7,.2,1);
-  --sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px);--chin:0px;
+  --sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;min-height:100%;height:100%;background:var(--bg);color:var(--text);font:16px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
@@ -154,16 +154,8 @@ select,input[type=text],input[type=password]{font-size:17px} /* >=16px stops iOS
 .streak svg{opacity:.55;transition:opacity var(--t),filter var(--t)}
 .streak.lit svg{opacity:1;filter:drop-shadow(0 0 6px rgba(82,185,164,.6))}
 
-/* ---- Bottom pinning (iOS standalone) ----
-   On iOS 26 Home Screen apps, a page that doesn't scroll gets a layout viewport (innerHeight) shorter than
-   the physical screen, so position:fixed;bottom:0 lands above a dead "chin". --chin = that measured gap
-   (set in index.html/app.js); fixed bottom UI extends down through it. On scrolling pages --chin is 0. */
-html{background:var(--bg)}
-
-#tabs{left:0;right:0;transform:none;width:auto;max-width:none;bottom:calc(-1 * var(--chin));
-  padding:8px max(8px, calc((100% - 560px) / 2 + 8px)) calc(var(--sab) + var(--chin) + 8px)}
-#view{padding-bottom:calc(var(--sab) + 132px)}
-#sheet-wrap{bottom:calc(-1 * var(--chin))}
-#sheet{bottom:calc(var(--kb,0px))}
-.sheet-end{height:calc(var(--sab) + var(--chin) + 24px)}
-.actionbar{padding-bottom:calc(var(--sab) + var(--chin) + 14px)}
+/* ---- Bottom pinning (iOS 26 Home Screen apps) ----
+   Fixed bottom:0 only lands on the true screen bottom when the document scrolls (proven by Settings).
+   So every page's content is at least one large-viewport + 1px tall: short pages behave exactly like Settings. */
+#view{min-height:calc(100vh + 1px);min-height:calc(100lvh + 1px)}
+html,body{overscroll-behavior-y:none}

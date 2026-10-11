@@ -65,7 +65,7 @@ function rhythm() { // consecutive days ending today or yesterday — never sham
 // ---------- UI SHELL ----------
 let tab = 'today';
 const view = $('#view');
-function go(t) { if (window.__measureChin) requestAnimationFrame(window.__measureChin); tab = t; document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t)); flow = null; render(); window.scrollTo(0, 0); }
+function go(t) { tab = t; document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t)); flow = null; render(); window.scrollTo(0, 0); }
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => go(b.dataset.tab));
 function render() {
   view.style.animation = 'none'; void view.offsetWidth; view.style.animation = '';
