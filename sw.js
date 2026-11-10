@@ -1,10 +1,10 @@
-const VERSION = 'remember-v13-punct';
+const VERSION = 'remember-v14-csb';
 const SHELL = ['./', 'index.html', 'styles.css', 'method.js', 'bible.js', 'app.js', 'config.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 self.addEventListener('install', e => { self.skipWaiting(); e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).catch(() => {})); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
   const req = e.request, u = new URL(req.url);
-  // Cross-origin (api.esv.org, bible-api.com) and non-GET: never touched — straight to the network.
+  // Cross-origin (api.esv.org, api.scripture.api.bible, bible-api.com) and non-GET: never touched — straight to the network.
   if (req.method !== 'GET' || u.origin !== self.location.origin) return;
   // Same-origin: network-first so fixes land immediately; cache is the offline fallback.
   e.respondWith(fetch(req, { cache: 'no-cache' }).then(r => {

@@ -1,7 +1,7 @@
 /* RemEmber — app UI. Data lives in localStorage on this device only. */
 (() => {
 const M = window.Method, B = window.Bible;
-const KEY = 'remember.state.v1', ESVKEY = 'remember.esvkey';
+const KEY = 'remember.state.v1', ESVKEY = 'remember.esvkey', CSBKEY = 'remember.csbkey';
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const today = () => M.ymd(new Date());
@@ -24,6 +24,15 @@ if (S.settings.showStreak == null) S.settings.showStreak = true;
 function save() { localStorage.setItem(KEY, JSON.stringify(S)); if (S.push && S.push.enabled) pushSyncSoon(); }
 const cleanKey = k => String(k || '').replace(/^\s*(authorization:\s*)?token\s+/i, '').replace(/\s+/g, '').replace(/^["']|["']$/g, '');
 const esvKey = () => cleanKey(localStorage.getItem(ESVKEY));
+const csbKey = () => cleanKey(localStorage.getItem(CSBKEY));
+const apiKeys = () => ({ esv: esvKey(), csb: csbKey() });
+const hasKey = tr => tr === 'esv' ? !!esvKey() : tr === 'csb' ? !!csbKey() : true;
+function keyHint(tr) {
+  if (tr === 'esv' && !esvKey()) return 'ESV text needs your free personal API key from api.esv.org (Settings → ESV API key). Until then you can still save the reference and paste the text.';
+  if (tr === 'csb' && !csbKey()) return 'CSB text needs your free API.Bible key (Settings → API.Bible key). In the API.Bible dashboard, add the Christian Standard Bible under Plan → Edit Bible Licenses (the free Starter plan allows 3 copyrighted translations). Until then you can still save the reference and paste the text.';
+  return '';
+}
+function copyrightFor(tr) { return tr === 'esv' ? B.ESV_COPYRIGHT : tr === 'csb' ? B.CSB_COPYRIGHT : ''; }
 const uid = () => Math.random().toString(36).slice(2, 10);
 function trName(id) { return (B.TRANSLATIONS.find(t => t.id === id) || {}).name || id.toUpperCase(); }
 
@@ -145,7 +154,7 @@ function renderToday() {
     cur.forEach(v => {
       const st = M.METHOD.stages[0];
       h += `<div class="card hero"><div class="row between"><span class="ref">${esc(v.ref)}<span class="tr">${trName(v.translation)}</span></span><span class="row" style="gap:8px"><span class="status learning">Daily</span><button class="xbtn" data-x="${v.id}" aria-label="Remove or requeue ${esc(v.ref)}">✕</button></span></div>
-      ${v.text ? `<p class="verse">${esc(v.text)}</p>` : `<p class="muted" style="margin-top:10px">Text needed — tap below to paste it or add your ESV key.</p>`}
+      ${v.text ? `<p class="verse">${esc(v.text)}</p>` : `<p class="muted" style="margin-top:10px">Text needed — tap below to paste it or add your ESV or API.Bible key.</p>`}
       <div class="row between" style="margin-top:14px"><span class="small muted">${v.cleanStreak}/${st.advanceAfter} clean recitals in a row${v.lastCounted === today() ? ' · done for today ✓' : ''}</span></div>
       <div class="bar"><i style="width:${100 * v.cleanStreak / st.advanceAfter}%"></i></div>
       <div class="spacer"></div><button class="btn primary block" data-practice="${v.id}">${!v.text ? 'Add text' : v.lastCounted === today() ? 'Practice again' : 'Start today’s verse'}</button></div>`;
@@ -159,7 +168,7 @@ function renderToday() {
   if (S.verses.some(v => v.text && v.status !== 'queued')) {
     h += `<div class="spacer"></div><button class="btn block" data-act="recall">📖 Recall a verse by reference</button>`;
   }
-  if (missingText.length) h += `<div class="note">${missingText.length} saved verse${missingText.length > 1 ? 's need' : ' needs'} text. Open it in Library to paste it, or add your ESV key in Settings.</div>`;
+  if (missingText.length) h += `<div class="note">${missingText.length} saved verse${missingText.length > 1 ? 's need' : ' needs'} text. Open it in Library to paste it, or add your ESV or API.Bible key in Settings.</div>`;
   if (S.verses.length && !cur.length && !due.length) h += `<div class="spacer"></div><button class="btn primary block" data-act="add">${ICON.plus} Add a verse</button>`;
   if (!S.verses.length) h += `<div class="empty">${FLAME}<p>Your library is empty.</p><div class="spacer"></div><button class="btn primary" data-act="add">${ICON.plus} Add a verse</button></div>`;
   view.innerHTML = h; bind();
@@ -308,6 +317,7 @@ function renderLibrary() {
       <div class="meta" style="margin-top:3px">${!v.text ? 'Needs text' : v.status === 'queued' ? 'Up next after the current verse' : `${M.METHOD.stages[v.stage].label} · next ${niceDate(v.due)}`}</div><div class="bar"><i style="width:${Math.round(100 * M.mastery(v))}%"></i></div></div></div></div>`).join('') + '</div>'
     : `<div class="empty">${FLAME}<p>${vs.length ? 'Nothing here yet.' : 'No verses yet. You choose every one.'}</p></div>`;
   if (vs.some(v => v.translation === 'esv')) h += `<p class="copyright">${esc(B.ESV_COPYRIGHT)}</p>`;
+  if (vs.some(v => v.translation === 'csb')) h += `<p class="copyright">${esc(B.CSB_COPYRIGHT)}</p>`;
   view.innerHTML = h;
   $('#add').onclick = openAdd;
   view.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { libFilter = b.dataset.f; render(); });
@@ -355,7 +365,7 @@ function openVerse(id) {
     <p class="small muted">${v.text ? `Stage: ${M.METHOD.stages[v.stage].label} · next ${niceDate(v.due)} · mastery ${Math.round(100 * M.mastery(v))}% · ${v.history.length} recitals` : ''}</p>
     <div class="row" style="margin-top:16px"><button class="btn danger sm" id="rm">Remove</button><span class="grow"></span><button class="btn sm" id="sv">Save</button><button class="btn primary sm" id="pr" ${v.text ? '' : 'disabled'}>Practice</button></div>`, s => {
     const persist = () => { const t = $('#vt', s).value.trim().replace(/\s+/g, ' '); if (t !== v.text) { v.text = t; } promoteQueue(); save(); };
-    $('#refetch', s) && ($('#refetch', s).onclick = async e => { e.target.textContent = 'Loading…'; try { v.text = (await B.fetchPassage(v.ref, v.translation, esvKey(), { noCache: true })).text; promoteQueue(); save(); openVerse(id); render(); } catch (err) { e.target.textContent = 'Load text'; toast(err.message); } });
+    $('#refetch', s) && ($('#refetch', s).onclick = async e => { e.target.textContent = 'Loading…'; try { v.text = (await B.fetchPassage(v.ref, v.translation, apiKeys(), { noCache: true })).text; promoteQueue(); save(); openVerse(id); render(); } catch (err) { e.target.textContent = 'Load text'; toast(err.message); } });
     $('#sv', s).onclick = () => { persist(); closeSheet(); toast('Saved'); render(); };
     $('#pr', s).onclick = () => { persist(); closeSheet(); startPractice(id); };
     $('#rm', s).onclick = () => { closeSheet(); removeVerse(id); };
@@ -368,13 +378,13 @@ function openAdd() {
   add = { mode: 'search', tr: S.settings.translation, book: null, chapter: null, sel: new Set(), chapterData: null, preview: null };
   renderAdd();
 }
-function trOptions(sel) { return B.TRANSLATIONS.map(t => `<option value="${t.id}" ${t.id === sel ? 'selected' : ''}>${t.name} — ${t.full}${t.needsKey && !esvKey() ? ' (needs key)' : ''}</option>`).join(''); }
+function trOptions(sel) { return B.TRANSLATIONS.map(t => `<option value="${t.id}" ${t.id === sel ? 'selected' : ''}>${t.name} — ${t.full}${t.needsKey && !hasKey(t.id) ? ' (needs key)' : ''}</option>`).join(''); }
 function renderAdd() {
   const a = add;
   let h = `<div class="row between"><h1 style="font-size:24px">Add verses</h1><button class="btn ghost sm" id="cl">Close</button></div>
    <label class="field"><span>Translation</span><select id="tr">${trOptions(a.tr)}</select></label>
-   ${a.tr === 'esv' && !esvKey() ? `<div class="note">ESV text needs your free personal API key from api.esv.org (Settings → ESV API key). Until then you can still save the reference and paste the text.</div>` : ''}
-   ${a.tr === 'own' ? `<div class="note">Paste the text from any translation you own (NIV, NLT, CSB…). It stays on this device.</div>` : ''}
+   ${keyHint(a.tr) ? `<div class="note">${esc(keyHint(a.tr))}</div>` : ''}
+   ${a.tr === 'own' ? `<div class="note">Paste the text from any translation you own (NIV, NLT…). It stays on this device.</div>` : ''}
    <div class="seg" style="margin:14px 0">${[['search', 'Reference'], ['browse', 'Browse']].map(([k, l]) => `<button class="${a.mode === k ? 'on' : ''}" data-m="${k}">${l}</button>`).join('')}</div>`;
   if (a.mode === 'search') {
     h += `<form class="row" id="qform" action="#" autocomplete="off" novalidate><input type="search" id="q" name="q" placeholder="John 3:16 or Romans 8:28-30" value="${esc(a.q || '')}" inputmode="search" enterkeyhint="search" autocapitalize="words" autocorrect="off" spellcheck="false"><button class="btn" id="find" type="submit">Find</button></form></div><div id="pv"></div>`;
@@ -405,7 +415,7 @@ function renderAdd() {
 }
 async function loadChapter() {
   const a = add, key = a.book + a.chapter + a.tr; a.chapterErr = '';
-  try { const d = await B.fetchChapter(a.book, a.chapter, a.tr, esvKey()); if (add === a && key === a.book + a.chapter + a.tr) a.chapterData = d; }
+  try { const d = await B.fetchChapter(a.book, a.chapter, a.tr, apiKeys()); if (add === a && key === a.book + a.chapter + a.tr) a.chapterData = d; }
   catch (e) { a.chapterErr = e.message; }
   if (add === a && a.chapter) renderAdd();
 }
@@ -421,8 +431,8 @@ async function saveSelection() {
     let text = '';
     const fromPreview = () => a.chapterData && a.chapterData.previewTr === a.tr ? a.chapterData.verses.filter(v => v.verse >= x && v.verse <= y).map(v => v.text).join(' ') : '';
     if (a.tr !== 'own') {
-      if (a.tr === 'esv' && !esvKey()) failed.push(`${ref}: no ESV key yet`);
-      else { try { text = (await B.fetchPassage(ref, a.tr, esvKey())).text; } catch (e) { text = fromPreview(); if (!text) failed.push(`${ref}: ${e.message}`); } }
+      if ((a.tr === 'esv' || a.tr === 'csb') && !hasKey(a.tr)) failed.push(`${ref}: no ${trName(a.tr)} key yet`);
+      else { try { text = (await B.fetchPassage(ref, a.tr, apiKeys())).text; } catch (e) { text = fromPreview(); if (!text) failed.push(`${ref}: ${e.message}`); } }
     }
     addVerse({ ref, book: a.book, chapter: a.chapter, from: x, to: y, translation: a.tr, text }); n++;
   }
@@ -438,10 +448,10 @@ async function doSearch() {
   if (p && !p.from) { a.mode = 'browse'; a.book = p.book; a.chapter = p.chapter; a.sel.clear(); a.chapterData = null; renderAdd(); loadChapter(); return; } // "Hebrews 11" -> browse that chapter
   if (!p) { a.preview = null; pv.innerHTML = `<div class="card errcard"><p style="color:var(--bad)">Couldn’t read that reference. Try “Romans 8:28”.</p><p class="small muted" style="margin-top:6px">You typed: “${esc(a.q || '')}”</p></div><div class="sheet-end"></div>`; revealPreview(); return; }
   const pr = a.preview = { p, text: '', err: '', tr: a.tr };
-  if (a.tr === 'esv' && !esvKey()) pr.err = 'No ESV key yet — add it in Settings, or paste the text below.';
+  if ((a.tr === 'esv' || a.tr === 'csb') && !hasKey(a.tr)) pr.err = `No ${trName(a.tr)} key yet — add it in Settings, or paste the text below.`;
   else if (a.tr !== 'own') {
     pv.innerHTML = `<div class="card"><div class="ref">${esc(p.ref)}<span class="tr">${trName(a.tr)}</span></div><p class="muted loading" style="margin-top:10px">Loading ${trName(a.tr)} text…</p></div><div class="sheet-end"></div>`; revealPreview();
-    try { const r = await B.fetchPassage(p.ref, a.tr, esvKey()); pr.text = r.text; } catch (e) { pr.err = e.message; }
+    try { const r = await B.fetchPassage(p.ref, a.tr, apiKeys()); pr.text = r.text; } catch (e) { pr.err = e.message; }
   }
   if (add !== a || a.preview !== pr || !$('#pv')) return; // sheet changed while loading
   showPreview();
@@ -451,7 +461,7 @@ function showPreview() {
   const needPaste = !text;
   pv.innerHTML = `<div class="card"><div class="ref">${esc(p.ref)}<span class="tr">${trName(a.tr)}</span></div>
    ${text ? `<p class="verse">${esc(text)}</p>` : `${err ? `<p class="small" style="color:var(--bad);margin-top:8px">${esc(err)}</p><button class="btn sm" id="retry" style="margin-top:8px">Retry</button>` : ''}<textarea id="paste" style="min-height:120px;font-size:16px;margin-top:10px" placeholder="Paste the verse text here (or leave blank and add it later)"></textarea>`}
-   ${a.tr === 'esv' && text ? `<p class="copyright">${esc(B.ESV_COPYRIGHT)}</p>` : ''}</div>
+   ${copyrightFor(a.tr) && text ? `<p class="copyright">${esc(copyrightFor(a.tr))}</p>` : ''}</div>
    <div class="actionbar show"><button class="btn ghost sm" id="clearp">Clear</button><button class="btn primary grow" id="savep">Add ${esc(p.ref.replace('–', '-'))}</button></div>`;
   $('#retry', s) && ($('#retry', s).onclick = doSearch);
   revealPreview();
@@ -471,8 +481,11 @@ function renderSettings() {
   <h2>Bible</h2><div class="card">
    <label class="field" style="margin-top:0"><span>Default translation</span><select id="deftr">${trOptions(st.translation)}</select></label>
    <label class="field"><span>ESV API key</span><input type="password" id="esv" placeholder="Paste your personal key" value="${esc(esvKey())}" autocomplete="off"></label>
-   <div class="row"><button class="btn sm" id="testkey">Test key</button><span class="small muted grow" id="testout"></span></div>
+   <div class="row"><button class="btn sm" id="testkey">Test ESV key</button><span class="small muted grow" id="testout"></span></div>
    <p class="small muted" style="margin-top:10px">Free for personal use at <b>api.esv.org</b> (create an account → API key). Stored only on this device; never uploaded or included in backups.</p>
+   <label class="field"><span>API.Bible key (for CSB)</span><input type="password" id="csb" placeholder="Paste your personal key" value="${esc(csbKey())}" autocomplete="off"></label>
+   <div class="row"><button class="btn sm" id="testcsb">Test CSB key</button><span class="small muted grow" id="testcsbout"></span></div>
+   <p class="small muted" style="margin-top:10px">Free for personal, non-commercial use at <b>scripture.api.bible</b> (create an account → create an app → copy the API key). On the Plan tab, add the Christian Standard Bible under Edit Bible Licenses. The Starter plan lets you add 3 copyrighted translations at no charge. Stored only on this device; never uploaded or included in backups.</p>
    <p class="small muted" style="margin-top:8px">Built-in free texts: KJV, WEB, ASV, BBE, Darby, OEB (public domain, via bible-api.com). NIV and NLT have no free public API — use “Paste my own text”.</p>
   </div>
   <h2>Rhythm</h2><div class="card">
@@ -484,15 +497,23 @@ function renderSettings() {
   </div>
   <h2>Backup</h2><div class="card"><div class="row"><button class="btn grow" id="exp">Export JSON</button><button class="btn grow" id="imp">Import</button></div><input type="file" id="file" accept="application/json,.json" hidden>
    <div class="spacer"></div><button class="btn danger block" id="reset">Reset everything</button></div>
-  <p class="copyright">${esc(B.ESV_COPYRIGHT)}</p><p class="copyright">RemEmber keeps everything on this device. Method rules: method.js.</p>`;
+  <p class="copyright">${esc(B.ESV_COPYRIGHT)}</p><p class="copyright">${esc(B.CSB_COPYRIGHT)}</p><p class="copyright">RemEmber keeps everything on this device. Method rules: method.js.</p>`;
   $('#uname').onchange = e => { const n = setName(e.target.value); if (!n) { e.target.value = userName(); toast('Name can’t be empty'); return; } e.target.value = n; toast('Hi, ' + n + '!'); };
   $('#deftr').onchange = e => { st.translation = e.target.value; save(); toast('Default translation: ' + trName(st.translation)); };
-  $('#esv').onchange = e => { const k = cleanKey(e.target.value); e.target.value = k; k ? localStorage.setItem(ESVKEY, k) : localStorage.removeItem(ESVKEY); toast(k ? 'ESV key saved on this device' : 'ESV key removed'); fillMissingESV(); };
+  $('#esv').onchange = e => { const k = cleanKey(e.target.value); e.target.value = k; k ? localStorage.setItem(ESVKEY, k) : localStorage.removeItem(ESVKEY); toast(k ? 'ESV key saved on this device' : 'ESV key removed'); fillMissingKeyed(); };
   $('#testkey').onclick = async () => {
     const k = cleanKey($('#esv').value); if (k !== esvKey()) { k ? localStorage.setItem(ESVKEY, k) : localStorage.removeItem(ESVKEY); $('#esv').value = k; }
     const out = $('#testout'); if (!k) { out.textContent = 'Paste your key first.'; return; }
     out.textContent = 'Testing…'; out.style.color = '';
-    try { const r = await B.fetchPassage('John 11:35', 'esv', k, { noCache: true }); out.textContent = `✓ Works: “${r.text}” (${r.ref})`; out.style.color = 'var(--ok)'; fillMissingESV(); }
+    try { const r = await B.fetchPassage('John 11:35', 'esv', { esv: k }, { noCache: true }); out.textContent = `✓ Works: “${r.text}” (${r.ref})`; out.style.color = 'var(--ok)'; fillMissingKeyed(); }
+    catch (e) { out.textContent = '✕ ' + e.message; out.style.color = 'var(--bad)'; }
+  };
+  $('#csb').onchange = e => { const k = cleanKey(e.target.value); e.target.value = k; k ? localStorage.setItem(CSBKEY, k) : localStorage.removeItem(CSBKEY); toast(k ? 'API.Bible key saved on this device' : 'API.Bible key removed'); fillMissingKeyed(); };
+  $('#testcsb').onclick = async () => {
+    const k = cleanKey($('#csb').value); if (k !== csbKey()) { k ? localStorage.setItem(CSBKEY, k) : localStorage.removeItem(CSBKEY); $('#csb').value = k; }
+    const out = $('#testcsbout'); if (!k) { out.textContent = 'Paste your key first.'; return; }
+    out.textContent = 'Testing…'; out.style.color = '';
+    try { const r = await B.fetchPassage('John 11:35', 'csb', { csb: k }, { noCache: true }); out.textContent = `✓ Works: “${r.text}” (${r.ref})`; out.style.color = 'var(--ok)'; fillMissingKeyed(); }
     catch (e) { out.textContent = '✕ ' + e.message; out.style.color = 'var(--bad)'; }
   };
   $('#rem').onchange = e => { st.reminder = e.target.value; save(); if (S.push && S.push.enabled) pushSubscribe(false).then(() => toast('Reminder time updated')).catch(err => toast(err.message)); };
@@ -510,11 +531,14 @@ function downloadICS() {
   const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//RemEmber//EN', 'BEGIN:VEVENT', 'UID:remember-daily@local', `DTSTART:${d}T${hh}${mm}00`, 'DURATION:PT10M', 'RRULE:FREQ=DAILY', 'SUMMARY:RemEmber — today’s verse', 'BEGIN:VALARM', 'TRIGGER:PT0M', 'ACTION:DISPLAY', 'DESCRIPTION:Time for your verse', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
   dl(new Blob([ics], { type: 'text/calendar' }), 'remember-reminder.ics');
 }
-async function fillMissingESV() {
-  if (!esvKey()) return; let n = 0;
-  for (const v of S.verses.filter(v => !v.text && v.translation === 'esv')) { try { v.text = (await B.fetchPassage(v.ref, 'esv', esvKey())).text; n++; } catch (e) { toast(e.message); break; } }
-  if (n) render();
-  if (n) { promoteQueue(); save(); toast(`Fetched ESV text for ${n} verse${n > 1 ? 's' : ''}`); }
+async function fillMissingKeyed() {
+  const jobs = [];
+  if (esvKey()) S.verses.filter(v => !v.text && v.translation === 'esv').forEach(v => jobs.push(v));
+  if (csbKey()) S.verses.filter(v => !v.text && v.translation === 'csb').forEach(v => jobs.push(v));
+  if (!jobs.length) return;
+  let n = 0;
+  for (const v of jobs) { try { v.text = (await B.fetchPassage(v.ref, v.translation, apiKeys())).text; n++; } catch (e) { toast(e.message); break; } }
+  if (n) { promoteQueue(); save(); render(); toast(`Fetched text for ${n} verse${n > 1 ? 's' : ''}`); }
 }
 
 // iOS keyboard: keep the bottom sheet above the keyboard and within the visible viewport.
