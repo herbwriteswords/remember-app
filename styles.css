@@ -95,6 +95,7 @@ label.field>span{display:block;font-size:13px;color:var(--muted);margin:0 2px 7p
 .diff .missing{color:var(--warn);border-bottom:1px dashed var(--warn)}
 .diff .extra{color:var(--faint);text-decoration:line-through}
 .diff small{font:500 12px var(--sans);color:var(--muted);vertical-align:super;margin-left:2px}
+.diff .punctmark{color:var(--ember2,#52b9a4);font-weight:700}
 .result-badge{display:inline-flex;align-items:center;gap:8px;font:600 22px var(--serif)}
 .result-badge.clean{color:var(--ok)}.result-badge.miss{color:var(--ember2)}
 .note{border-left:2px solid var(--ember);padding:8px 12px;color:var(--muted);font-size:14px;background:rgba(82,185,164,.05);border-radius:0 10px 10px 0;margin-top:12px}

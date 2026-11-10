@@ -230,11 +230,15 @@ function renderFlow() {
     const r = f.result;
     const toks = f.text.split(/\s+/).filter(t => M.words(t).length); let ti = 0;
     if (toks.length === r.diff.filter(d => d.expected).length) r.diff.forEach(d => { if (d.expected) d.expected = toks[ti++]; });
-    const diff = r.diff.map(d => d.type === 'ok' ? `<span class="ok">${esc(d.expected)}</span>` : d.type === 'wrong' ? `<span class="wrong">${esc(d.expected)}</span><small>you: ${esc(d.got)}</small>` : d.type === 'missing' ? `<span class="missing">${esc(d.expected)}</span>` : `<span class="extra">${esc(d.got)}</span>`).join(' ');
+    const markPunct = s => esc(s).replace(/([^\p{L}\p{N}\s]+)/gu, '<span class="punctmark">$1</span>');
+    const show = (s, hi) => (hi && r.punctNote) ? markPunct(s) : esc(s);
+    const diff = r.diff.map(d => d.type === 'ok' ? `<span class="ok">${show(d.expected, true)}</span>` : d.type === 'wrong' ? `<span class="wrong">${esc(d.expected)}</span><small>you: ${esc(d.got)}</small>` : d.type === 'missing' ? `<span class="missing">${esc(d.expected)}</span>` : `<span class="extra">${esc(d.got)}</span>`).join(' ');
     const n = r.diff.filter(d => d.type !== 'ok').length;
+    const cleanMsg = f.usedHint ? 'Every word matched — with a hint, so it counts as practice.' : (r.punctNote ? 'Every word was right — this counts.' : 'Every word was right.');
     h = head() + stepBar(2) + `<div class="card ${r.clean ? 'hero' : ''}"><div class="result-badge ${r.clean ? 'clean' : 'miss'}">${r.clean ? '✓ Clean' : 'Almost there'}</div>
-      <p class="small muted" style="margin-top:4px">${r.clean ? (f.usedHint ? 'Every word matched — with a hint, so it counts as practice.' : 'Every word, exactly.') : `${n} word${n > 1 ? 's' : ''} to tighten up. Gold = missed, red = different word, grey = extra.`}</p>
+      <p class="small muted" style="margin-top:4px">${r.clean ? cleanMsg : `${n} word${n > 1 ? 's' : ''} to tighten up. Gold = missed, red = different word, grey = extra.`}</p>
       <div class="ref" style="margin-top:14px">${esc(f.ref)}</div><p class="diff">${diff}</p>
+      ${r.punctNote ? `<div class="note">${esc(r.punctNote)}</div>` : ''}
       ${r.refNote ? `<div class="note">${esc(r.refNote)}</div>` : ''}
       ${f.schedNote ? `<div class="note">${esc(f.schedNote)}</div>` : ''}</div>
       <div class="row" style="margin-top:14px"><button class="btn grow" id="again">Try again</button><button class="btn primary grow" id="done">Done</button></div>`;

@@ -56,6 +56,79 @@
   }
   function dropStutters(w) { return w.filter((x, i) => i === 0 || x !== w[i - 1]); }
 
+  // Spoken punctuation from dictation ("need comma for") must not fail a recital.
+  const SPOKEN_PHRASES = [
+    ['question', 'mark'], ['exclamation', 'mark'], ['exclamation', 'point'],
+    ['full', 'stop'], ['semi', 'colon'], ['quotation', 'mark'], ['quotation', 'marks'],
+    ['end', 'quote'], ['open', 'quote'], ['close', 'quote'], ['dot', 'dot', 'dot'],
+  ];
+  const SPOKEN_ONE = new Set(['comma', 'period', 'colon', 'semicolon', 'quote', 'unquote', 'apostrophe', 'dash', 'hyphen', 'ellipsis']);
+  function dropSpokenPunct(got, expSet) {
+    const out = [];
+    for (let i = 0; i < got.length; i++) {
+      let skip = 0;
+      for (const p of SPOKEN_PHRASES) {
+        if (i + p.length <= got.length && p.every((w, k) => got[i + k] === w) && p.every(w => !expSet.has(w))) { skip = p.length; break; }
+      }
+      if (skip) { i += skip - 1; continue; }
+      if (SPOKEN_ONE.has(got[i]) && !expSet.has(got[i])) continue;
+      out.push(got[i]);
+    }
+    return out;
+  }
+  function normalizePunctChars(s) {
+    return String(s)
+      .replace(/[“”«»]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .replace(/[\u2010-\u2015]/g, '-')
+      .replace(/\.\.\./g, '…');
+  }
+  function marksOf(tok) {
+    return normalizePunctChars(tok).replace(/[\p{L}\p{N}\s]/gu, '');
+  }
+  // Official word+punctuation forms that differ from the attempt (words already match).
+  function punctTips(verseText, attempt, reference) {
+    const expT = String(verseText).trim().split(/\s+/).filter(t => words(t).length);
+    const gotRaw = String(attempt).trim().split(/\s+/).filter(Boolean);
+    const expSet = new Set(expT.flatMap(t => words(t)));
+    // Drop spoken punctuation tokens/phrases from the attempt, then keep tokens that contain a word.
+    const gotKept = [];
+    for (let i = 0; i < gotRaw.length; i++) {
+      const seq = [];
+      let j = i;
+      while (j < gotRaw.length && words(gotRaw[j]).length) { seq.push(words(gotRaw[j])[0]); j++; }
+      let skip = 0;
+      for (const p of SPOKEN_PHRASES) {
+        if (seq.length >= p.length && p.every((w, k) => seq[k] === w) && p.every(w => !expSet.has(w))) { skip = p.length; break; }
+      }
+      if (skip) { i += skip - 1; continue; }
+      const w = words(gotRaw[i])[0];
+      if (!w) continue;
+      if (SPOKEN_ONE.has(w) && !expSet.has(w)) continue;
+      gotKept.push(gotRaw[i]);
+    }
+    const gotW = gotKept.map(t => words(t)[0]);
+    const expW = expT.map(t => words(t)[0]);
+    const r = stripRef(gotW, reference || '', expW);
+    let s = 0;
+    if (r.words.length && r.words[0]) {
+      s = gotW.indexOf(r.words[0]);
+      if (s < 0) s = 0;
+    }
+    const slice = gotKept.slice(s, s + expT.length);
+    const tips = [];
+    if (slice.length === expT.length) {
+      for (let i = 0; i < expT.length; i++) {
+        if (marksOf(expT[i]) !== marksOf(slice[i] || '')) tips.push(expT[i]);
+      }
+      return tips;
+    }
+    // Fallback: compare overall punctuation, ignoring chapter:verse colons in a spoken/typed reference.
+    const verseMarks = marksOf(verseText);
+    const attemptMarks = marksOf(String(attempt).replace(/\b\d+:\d+[a-z]?\b/gi, ''));
+    return verseMarks === attemptMarks ? [] : expT.filter(t => marksOf(t));
+  }
+
   // Strip a spoken/typed reference ("Philippians 4:11", "Phil four eleven", "chapter 4 verse 11") from start/end.
   function refTokens(ref) {
     const r = words(String(ref).replace(/[:\-–]/g, ' '));
@@ -80,9 +153,10 @@
   }
 
   // ---------- GRADING (strict) ----------
-  // Returns { clean, score, diff:[{type:'ok'|'wrong'|'missing'|'extra', expected, got}], refNote }
+  // Returns { clean, score, diff:[{type:'ok'|'wrong'|'missing'|'extra', expected, got}], refNote, punctNote }
   function grade(attempt, verseText, reference) {
     let exp = words(verseText), got = words(attempt);
+    if (METHOD.grading.ignorePunctuation) got = dropSpokenPunct(got, new Set(exp));
     if (METHOD.grading.ignoreStutters) { got = dropStutters(got); }
     const r = stripRef(got, reference || '', exp);
     got = r.words;
@@ -98,7 +172,12 @@
       refNote = !r.hadStart && !r.hadEnd ? 'Try saying the reference before and after — it doesn’t affect your result.'
         : r.hadStart ? 'Nice start! Close with the reference too next time.' : 'Try opening with the reference too next time.';
     }
-    return { clean, score: expC.length ? ok / expC.length : 0, diff, refNote };
+    let punctNote = null;
+    if (METHOD.grading.ignorePunctuation && clean) {
+      const tips = punctTips(verseText, attempt, reference);
+      if (tips.length) punctNote = 'The words were right, so this counts. For next time, the punctuation is: ' + tips.join('  ·  ');
+    }
+    return { clean, score: expC.length ? ok / expC.length : 0, diff, refNote, punctNote };
   }
   // LCS-based word alignment; adjacent missing+extra pairs become "wrong".
   function alignDiff(a, b) {
